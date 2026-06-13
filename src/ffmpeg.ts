@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { buildConcatList } from "./concat.js";
 
 const pexecFile = promisify(execFile);
 
@@ -161,6 +162,150 @@ export async function encodeCrf(opts: EncodeOptions): Promise<void> {
     "+faststart",
     output,
   ]);
+}
+
+export interface StreamInfo {
+  index: number;
+  type: string;
+  codec?: string;
+  lang?: string;
+  width?: number;
+  height?: number;
+  channels?: number;
+}
+
+/** List all streams in a file (video / audio / subtitle), in order. */
+export async function listStreams(input: string): Promise<StreamInfo[]> {
+  const { stdout } = await pexecFile("ffprobe", [
+    "-v",
+    "error",
+    "-print_format",
+    "json",
+    "-show_streams",
+    input,
+  ]);
+  const data = JSON.parse(stdout) as {
+    streams?: Array<{
+      index: number;
+      codec_type?: string;
+      codec_name?: string;
+      width?: number;
+      height?: number;
+      channels?: number;
+      tags?: { language?: string };
+    }>;
+  };
+  return (data.streams ?? []).map((s) => ({
+    index: s.index,
+    type: s.codec_type ?? "unknown",
+    codec: s.codec_name,
+    lang: s.tags?.language,
+    width: s.width,
+    height: s.height,
+    channels: s.channels,
+  }));
+}
+
+export interface ConvertOptions {
+  input: string;
+  output: string;
+  /** Video stream index within its type (0 = first video track). */
+  videoTrack?: number;
+  /** Audio stream index within its type (0 = first audio track). */
+  audioTrack?: number;
+  crf?: number;
+  audioKbps?: number;
+  maxHeight?: number;
+}
+
+/** Transcode to H.264/AAC mp4, selecting specific tracks and dropping subs. */
+export async function convert(opts: ConvertOptions): Promise<void> {
+  const {
+    input,
+    output,
+    videoTrack = 0,
+    audioTrack = 0,
+    crf = 23,
+    audioKbps = 192,
+    maxHeight,
+  } = opts;
+  await pexecFile("ffmpeg", [
+    "-y",
+    "-i",
+    input,
+    "-map",
+    `0:v:${videoTrack}`,
+    "-map",
+    `0:a:${audioTrack}?`,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    String(crf),
+    ...scaleFilter(maxHeight),
+    "-c:a",
+    "aac",
+    "-b:a",
+    `${audioKbps}k`,
+    "-sn",
+    "-movflags",
+    "+faststart",
+    output,
+  ]);
+}
+
+export interface ConcatOptions {
+  inputs: string[];
+  output: string;
+  crf?: number;
+  audioKbps?: number;
+  maxHeight?: number;
+}
+
+/** Concatenate multiple files into one mp4 via the concat demuxer (re-encode). */
+export async function concat(opts: ConcatOptions): Promise<void> {
+  const { inputs, output, crf = 23, audioKbps = 192, maxHeight } = opts;
+  const { writeFile, rm, mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join, resolve } = await import("node:path");
+
+  const dir = await mkdtemp(join(tmpdir(), "vshrink-"));
+  const listPath = join(dir, "concat.txt");
+  await writeFile(listPath, buildConcatList(inputs.map((p) => resolve(p))), "utf8");
+
+  try {
+    await pexecFile("ffmpeg", [
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      listPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a:0?",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "medium",
+      "-crf",
+      String(crf),
+      ...scaleFilter(maxHeight),
+      "-c:a",
+      "aac",
+      "-b:a",
+      `${audioKbps}k`,
+      "-sn",
+      "-movflags",
+      "+faststart",
+      output,
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function cleanupPassLogs(prefix: string): Promise<void> {

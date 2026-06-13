@@ -16,7 +16,17 @@ import { PRESETS, DEFAULT_PRESET, isPreset } from "./presets.js";
 
 export { planBitrate, parseSize, formatSize } from "./bitrate.js";
 export { PRESETS, DEFAULT_PRESET, isPreset, type Preset } from "./presets.js";
-export { probe, type ProbeResult } from "./ffmpeg.js";
+export {
+  probe,
+  listStreams,
+  convert,
+  concat,
+  type ProbeResult,
+  type StreamInfo,
+  type ConvertOptions,
+  type ConcatOptions,
+} from "./ffmpeg.js";
+export { buildConcatList, escapeConcatPath } from "./concat.js";
 
 export interface ShrinkOptions {
   input: string;

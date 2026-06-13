@@ -1,7 +1,7 @@
 {
   "name": "@printemps-tokyo/vshrink",
-  "version": "0.1.0",
-  "description": "Shrink videos toward a target file size with ffmpeg. Zero-dependency CLI.",
+  "version": "0.2.0",
+  "description": "ffmpeg helpers to shrink, convert, and concatenate videos. Zero-dependency CLI.",
   "type": "module",
   "license": "MIT",
   "author": "printemps.tokyo <develop@printemps.tokyo>",
