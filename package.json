@@ -1,7 +1,7 @@
 {
   "name": "@printemps-tokyo/vshrink",
-  "version": "0.2.0",
-  "description": "ffmpeg helpers to shrink, convert, and concatenate videos. Zero-dependency CLI.",
+  "version": "0.3.0",
+  "description": "ffmpeg helpers to shrink, convert, concatenate, GIF-ify, and (un)burn subtitles in videos. Zero-dependency CLI.",
   "type": "module",
   "license": "MIT",
   "author": "printemps.tokyo <develop@printemps.tokyo>",
@@ -18,7 +18,9 @@
     "video",
     "compress",
     "cli",
-    "transcode"
+    "transcode",
+    "gif",
+    "subtitles"
   ],
   "engines": {
     "node": ">=20"

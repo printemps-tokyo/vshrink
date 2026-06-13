@@ -21,12 +21,22 @@ export {
   listStreams,
   convert,
   concat,
+  gif,
+  extractSubs,
   type ProbeResult,
   type StreamInfo,
   type ConvertOptions,
   type ConcatOptions,
+  type GifOptions,
+  type ExtractSubsOptions,
 } from "./ffmpeg.js";
 export { buildConcatList, escapeConcatPath } from "./concat.js";
+export {
+  buildPaletteGenFilter,
+  buildPaletteUseFilter,
+  type PaletteFilterOptions,
+} from "./gif.js";
+export { escapeSubtitlesPath } from "./subtitles.js";
 
 export interface ShrinkOptions {
   input: string;

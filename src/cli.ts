@@ -5,6 +5,8 @@ import {
   shrink,
   convert,
   concat,
+  gif,
+  extractSubs,
   listStreams,
   formatSize,
   parseSize,
@@ -16,23 +18,30 @@ const HELP = `vshrink - ffmpeg helpers for shrinking and converting videos
 
 Usage:
   vshrink [shrink] [options] <input...>   Shrink toward a target file size
-  vshrink convert [options] <input...>    Transcode to mp4, pick tracks, drop subs
+  vshrink convert [options] <input...>    Transcode to mp4, pick tracks, burn subs
   vshrink concat -o out.mp4 <input...>     Merge files into one mp4
+  vshrink gif [options] <input>            High-quality GIF (palette method)
+  vshrink extract-subs -o out.srt <input>  Extract a subtitle track to a file
   vshrink probe <input>                    List streams (tracks) in a file
 
 Run "vshrink <command> --help" for command-specific options.
 
 Commands:
-  shrink   (default) two-pass H.264 to hit a target size, CRF fallback
-  convert  mkv/mov -> mp4 with --video-track / --audio-track selection
-  concat   concatenate multiple inputs (re-encode) into one mp4
-  probe    print the stream table to help choose track numbers
+  shrink        (default) two-pass H.264 to hit a target size, CRF fallback
+  convert       mkv/mov -> mp4 with --video-track / --audio-track selection
+  concat        concatenate multiple inputs (re-encode) into one mp4
+  gif           render a high-quality GIF via the two-pass palette method
+  extract-subs  pull a subtitle stream out to a .srt/.ass/.vtt file
+  probe         print the stream table to help choose track numbers
 
 Examples:
   vshrink clip.mov                       # shrink (1080p quality-based)
   vshrink -p discord clip.mov            # shrink toward 8MB
   vshrink convert --audio-track 1 movie.mkv
+  vshrink convert --burn-subs subs.srt movie.mkv
   vshrink concat -o full.mp4 part1.mkv part2.mkv
+  vshrink gif --fps 15 --width 600 clip.mov
+  vshrink extract-subs -o out.srt movie.mkv
   vshrink probe movie.mkv
 `;
 
@@ -57,14 +66,46 @@ Usage:
   vshrink convert [options] <input...>
 
 Options:
-  --video-track <n>   Video track index (default 0)
-  --audio-track <n>   Audio track index (default 0)
-  --crf <n>           Quality (lower = better, default 23)
-  --audio <kbps>      Audio bitrate in kbit/s (default 192)
-  --max-height <n>    Cap output height in pixels
-  -o, --output <path> Output path (single input only)
+  --video-track <n>    Video track index (default 0)
+  --audio-track <n>    Audio track index (default 0)
+  --crf <n>            Quality (lower = better, default 23)
+  --audio <kbps>       Audio bitrate in kbit/s (default 192)
+  --max-height <n>     Cap output height in pixels
+  --burn-subs <file>   Burn an external subtitle file (.srt/.ass) into the video
+  --burn-track <n>     Burn an embedded subtitle track (by subtitle index)
+  -o, --output <path>  Output path (single input only)
 
-Subtitles are dropped. Use "vshrink probe <input>" to find track numbers.
+By default subtitles are dropped. --burn-subs and --burn-track hardsub the
+subtitles into the picture and are mutually exclusive; both require an ffmpeg
+build with libass. Use "vshrink probe <input>" to find track numbers.
+`;
+
+const GIF_HELP = `vshrink gif - render a high-quality GIF via the palette method
+
+Usage:
+  vshrink gif [options] <input>
+
+Options:
+  --fps <n>            Frame rate (default 12)
+  --width <px>         Output width; height keeps aspect (default 480)
+  --start <ts>         Start timestamp, e.g. 00:00:05 or 5 (maps to -ss)
+  --duration <sec>     Clip length in seconds (maps to -t)
+  -o, --output <path>  Output path (default "<name>.gif" next to input)
+
+Uses a two-pass palettegen/paletteuse encode for sharp, low-banding GIFs.
+`;
+
+const EXTRACT_SUBS_HELP = `vshrink extract-subs - extract a subtitle stream to a file
+
+Usage:
+  vshrink extract-subs [--track <n>] -o <output> <input>
+
+Options:
+  --track <n>          Subtitle track index (default 0)
+  -o, --output <path>  Output path (required)
+
+The output extension determines the format (.srt / .ass / .vtt). Use
+"vshrink probe <input>" to find subtitle track numbers.
 `;
 
 const CONCAT_HELP = `vshrink concat - concatenate multiple files into one mp4
@@ -87,7 +128,32 @@ function defaultOutput(input: string, suffix: string): string {
   return join(dirname(input), `${base}.${suffix}.mp4`);
 }
 
-const COMMANDS = new Set(["shrink", "convert", "concat", "probe"]);
+/** Parse a CLI value that must be a positive number, or throw a clear error. */
+function parsePositive(name: string, value: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`--${name} must be a positive number (got "${value}")`);
+  }
+  return n;
+}
+
+/** Parse a CLI value that must be a non-negative integer (e.g. a track index). */
+function parseTrack(name: string, value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`--${name} must be a non-negative integer (got "${value}")`);
+  }
+  return n;
+}
+
+const COMMANDS = new Set([
+  "shrink",
+  "convert",
+  "concat",
+  "gif",
+  "extract-subs",
+  "probe",
+]);
 
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
@@ -110,6 +176,10 @@ async function main(): Promise<number> {
       return runConvert(rest);
     case "concat":
       return runConcat(rest);
+    case "gif":
+      return runGif(rest);
+    case "extract-subs":
+      return runExtractSubs(rest);
     case "probe":
       return runProbe(rest);
     default:
@@ -208,6 +278,8 @@ async function runConvert(argv: string[]): Promise<number> {
       crf: { type: "string" },
       audio: { type: "string" },
       "max-height": { type: "string" },
+      "burn-subs": { type: "string" },
+      "burn-track": { type: "string" },
       output: { type: "string", short: "o" },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -225,6 +297,12 @@ async function runConvert(argv: string[]): Promise<number> {
     process.stderr.write("error: --output cannot be used with multiple inputs\n");
     return 1;
   }
+  if (values["burn-subs"] && values["burn-track"]) {
+    process.stderr.write(
+      "error: --burn-subs and --burn-track are mutually exclusive\n",
+    );
+    return 1;
+  }
 
   let failed = 0;
   for (const input of positionals) {
@@ -234,11 +312,13 @@ async function runConvert(argv: string[]): Promise<number> {
       await convert({
         input,
         output,
-        videoTrack: values["video-track"] ? Number(values["video-track"]) : undefined,
-        audioTrack: values["audio-track"] ? Number(values["audio-track"]) : undefined,
-        crf: values.crf ? Number(values.crf) : undefined,
-        audioKbps: values.audio ? Number(values.audio) : undefined,
-        maxHeight: values["max-height"] ? Number(values["max-height"]) : undefined,
+        videoTrack: values["video-track"] ? parseTrack("video-track", values["video-track"]) : undefined,
+        audioTrack: values["audio-track"] ? parseTrack("audio-track", values["audio-track"]) : undefined,
+        crf: values.crf ? parsePositive("crf", values.crf) : undefined,
+        audioKbps: values.audio ? parsePositive("audio", values.audio) : undefined,
+        maxHeight: values["max-height"] ? parsePositive("max-height", values["max-height"]) : undefined,
+        burnSubsPath: values["burn-subs"],
+        burnTrack: values["burn-track"] ? parseTrack("burn-track", values["burn-track"]) : undefined,
       });
       const { stat } = await import("node:fs/promises");
       process.stdout.write(`${input} -> ${output} ${formatSize((await stat(output)).size)}\n`);
@@ -296,6 +376,107 @@ async function runConcat(argv: string[]): Promise<number> {
   }
 }
 
+function gifOutput(input: string): string {
+  const ext = extname(input);
+  const base = basename(input, ext);
+  return join(dirname(input), `${base}.gif`);
+}
+
+async function runGif(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      fps: { type: "string" },
+      width: { type: "string" },
+      start: { type: "string" },
+      duration: { type: "string" },
+      output: { type: "string", short: "o" },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+  if (values.help) {
+    process.stdout.write(GIF_HELP);
+    return 0;
+  }
+  if (positionals.length === 0) {
+    process.stderr.write("error: gif needs an input file\n\n" + GIF_HELP);
+    return 1;
+  }
+  if (positionals.length > 1) {
+    process.stderr.write("error: gif takes a single input\n");
+    return 1;
+  }
+
+  const input = positionals[0] as string;
+  const output = values.output ?? gifOutput(input);
+  try {
+    process.stderr.write(`  ${input}: rendering gif...\n`);
+    await gif({
+      input,
+      output,
+      fps: values.fps ? parsePositive("fps", values.fps) : undefined,
+      width: values.width ? parsePositive("width", values.width) : undefined,
+      start: values.start,
+      durationSec: values.duration ? parsePositive("duration", values.duration) : undefined,
+    });
+    const { stat } = await import("node:fs/promises");
+    process.stdout.write(`${input} -> ${output} ${formatSize((await stat(output)).size)}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`error: ${input}: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
+async function runExtractSubs(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      track: { type: "string" },
+      output: { type: "string", short: "o" },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+  if (values.help) {
+    process.stdout.write(EXTRACT_SUBS_HELP);
+    return 0;
+  }
+  if (positionals.length === 0) {
+    process.stderr.write("error: extract-subs needs an input file\n\n" + EXTRACT_SUBS_HELP);
+    return 1;
+  }
+  if (positionals.length > 1) {
+    process.stderr.write("error: extract-subs takes a single input\n");
+    return 1;
+  }
+  if (!values.output) {
+    process.stderr.write("error: extract-subs requires -o/--output\n\n" + EXTRACT_SUBS_HELP);
+    return 1;
+  }
+
+  const input = positionals[0] as string;
+  try {
+    process.stderr.write(`  ${input}: extracting subtitles...\n`);
+    await extractSubs({
+      input,
+      output: values.output,
+      track: values.track ? parseTrack("track", values.track) : undefined,
+    });
+    const { stat } = await import("node:fs/promises");
+    process.stdout.write(
+      `${input} -> ${values.output} ${formatSize((await stat(values.output)).size)}\n`,
+    );
+    return 0;
+  } catch (err) {
+    process.stderr.write(`error: ${input}: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
 async function runProbe(argv: string[]): Promise<number> {
   const input = argv.find((a) => !a.startsWith("-"));
   if (!input) {
@@ -312,7 +493,10 @@ async function runProbe(argv: string[]): Promise<number> {
       const dims = s.width && s.height ? ` ${s.width}x${s.height}` : "";
       const ch = s.channels ? ` ${s.channels}ch` : "";
       const lang = s.lang ? ` [${s.lang}]` : "";
-      const track = s.type === "video" || s.type === "audio" ? ` track ${typeIndex}` : "";
+      const track =
+        s.type === "video" || s.type === "audio" || s.type === "subtitle"
+          ? ` track ${typeIndex}`
+          : "";
       process.stdout.write(
         `  #${s.index} ${s.type}${track}  ${s.codec ?? "?"}${dims}${ch}${lang}\n`,
       );

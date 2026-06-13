@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { buildConcatList } from "./concat.js";
+import { buildPaletteGenFilter, buildPaletteUseFilter } from "./gif.js";
+import { escapeSubtitlesPath } from "./subtitles.js";
 
 const pexecFile = promisify(execFile);
 
@@ -216,6 +218,38 @@ export interface ConvertOptions {
   crf?: number;
   audioKbps?: number;
   maxHeight?: number;
+  /** Burn an external subtitle file (.srt/.ass) into the video. Needs libass. */
+  burnSubsPath?: string;
+  /** Burn an embedded subtitle stream (by subtitle index) into the video. Needs libass. */
+  burnTrack?: number;
+}
+
+/**
+ * Build the scale expression (without the -vf flag) used by the convert filter
+ * chain, or undefined when no height cap is requested.
+ */
+function scaleExpr(maxHeight?: number): string | undefined {
+  if (!maxHeight) return undefined;
+  return `scale=-2:'min(${maxHeight},ih)'`;
+}
+
+/**
+ * Build the "subtitles" video filter for burn-in (hardsub). An external file
+ * is referenced by its escaped path; an embedded track is selected with si=<n>
+ * against the (escaped) input path.
+ */
+function subtitlesFilter(
+  input: string,
+  burnSubsPath?: string,
+  burnTrack?: number,
+): string | undefined {
+  if (burnSubsPath !== undefined) {
+    return `subtitles='${escapeSubtitlesPath(burnSubsPath)}'`;
+  }
+  if (burnTrack !== undefined) {
+    return `subtitles='${escapeSubtitlesPath(input)}':si=${burnTrack}`;
+  }
+  return undefined;
 }
 
 /** Transcode to H.264/AAC mp4, selecting specific tracks and dropping subs. */
@@ -228,31 +262,62 @@ export async function convert(opts: ConvertOptions): Promise<void> {
     crf = 23,
     audioKbps = 192,
     maxHeight,
+    burnSubsPath,
+    burnTrack,
   } = opts;
-  await pexecFile("ffmpeg", [
-    "-y",
-    "-i",
-    input,
-    "-map",
-    `0:v:${videoTrack}`,
-    "-map",
-    `0:a:${audioTrack}?`,
-    "-c:v",
-    "libx264",
-    "-preset",
-    "medium",
-    "-crf",
-    String(crf),
-    ...scaleFilter(maxHeight),
-    "-c:a",
-    "aac",
-    "-b:a",
-    `${audioKbps}k`,
-    "-sn",
-    "-movflags",
-    "+faststart",
-    output,
-  ]);
+
+  if (burnSubsPath !== undefined && burnTrack !== undefined) {
+    throw new Error("--burn-subs and --burn-track are mutually exclusive");
+  }
+
+  // Compose -vf from the optional scale and subtitles filters. Scale runs first
+  // so the subtitles are rendered at the final output resolution.
+  const filters = [
+    scaleExpr(maxHeight),
+    subtitlesFilter(input, burnSubsPath, burnTrack),
+  ].filter((f): f is string => f !== undefined);
+  const vf = filters.length > 0 ? ["-vf", filters.join(",")] : [];
+
+  try {
+    await pexecFile("ffmpeg", [
+      "-y",
+      "-i",
+      input,
+      "-map",
+      `0:v:${videoTrack}`,
+      "-map",
+      `0:a:${audioTrack}?`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "medium",
+      "-crf",
+      String(crf),
+      ...vf,
+      "-c:a",
+      "aac",
+      "-b:a",
+      `${audioKbps}k`,
+      "-sn",
+      "-movflags",
+      "+faststart",
+      output,
+    ]);
+  } catch (err) {
+    const message = (err as Error).message;
+    // Only the genuine "filter not built in" signature should be reported as a
+    // libass problem. Other burn-in failures (bad path, wrong si= index, etc.)
+    // must surface their real ffmpeg error instead of a misleading message.
+    const burningSubs = burnSubsPath !== undefined || burnTrack !== undefined;
+    if (burningSubs && /(No such filter|Unknown filter):?\s*'?subtitles/i.test(message)) {
+      throw new Error(
+        "subtitle burn-in failed: this ffmpeg build lacks the 'subtitles' filter " +
+          "(libass). Install an ffmpeg built with --enable-libass.\n" +
+          message,
+      );
+    }
+    throw err;
+  }
 }
 
 export interface ConcatOptions {
@@ -306,6 +371,88 @@ export async function concat(opts: ConcatOptions): Promise<void> {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+export interface GifOptions {
+  input: string;
+  output: string;
+  /** Output frame rate (default 12). */
+  fps?: number;
+  /** Target width in pixels; height keeps aspect ratio (default 480). */
+  width?: number;
+  /** Start timestamp (maps to -ss), e.g. "00:00:05" or "5". */
+  start?: string;
+  /** Duration in seconds (maps to -t). */
+  durationSec?: number;
+}
+
+/**
+ * Render a high-quality GIF using the two-pass palette method: pass 1 generates
+ * an optimal palette, pass 2 applies it. The palette is written to a temp dir
+ * and cleaned up afterwards.
+ */
+export async function gif(opts: GifOptions): Promise<void> {
+  const { input, output, fps = 12, width = 480, start, durationSec } = opts;
+  const { rm, mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  // -ss / -t go before -i for fast input seeking.
+  const seek = [
+    ...(start !== undefined ? ["-ss", start] : []),
+    ...(durationSec !== undefined ? ["-t", String(durationSec)] : []),
+  ];
+
+  const dir = await mkdtemp(join(tmpdir(), "vshrink-"));
+  const palette = join(dir, "palette.png");
+
+  try {
+    await pexecFile("ffmpeg", [
+      ...seek,
+      "-i",
+      input,
+      "-vf",
+      buildPaletteGenFilter({ fps, width }),
+      "-y",
+      palette,
+    ]);
+    await pexecFile("ffmpeg", [
+      ...seek,
+      "-i",
+      input,
+      "-i",
+      palette,
+      "-lavfi",
+      buildPaletteUseFilter({ fps, width }),
+      "-y",
+      output,
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+export interface ExtractSubsOptions {
+  input: string;
+  output: string;
+  /** Subtitle stream index within its type (0 = first subtitle track). */
+  track?: number;
+}
+
+/**
+ * Extract a subtitle stream to a file. The output extension determines the
+ * format (.srt / .ass / .vtt).
+ */
+export async function extractSubs(opts: ExtractSubsOptions): Promise<void> {
+  const { input, output, track = 0 } = opts;
+  await pexecFile("ffmpeg", [
+    "-y",
+    "-i",
+    input,
+    "-map",
+    `0:s:${track}`,
+    output,
+  ]);
 }
 
 async function cleanupPassLogs(prefix: string): Promise<void> {

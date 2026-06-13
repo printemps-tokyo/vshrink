@@ -33,8 +33,10 @@ npx @printemps-tokyo/vshrink clip.mov
 
 ```bash
 vshrink [shrink] [options] <input...>   # shrink toward a target file size
-vshrink convert [options] <input...>    # transcode to mp4, pick tracks, drop subs
+vshrink convert [options] <input...>    # transcode to mp4, pick tracks, burn subs
 vshrink concat -o out.mp4 <input...>    # merge files into one mp4
+vshrink gif [options] <input>           # high-quality GIF (palette method)
+vshrink extract-subs -o out.srt <input> # extract a subtitle track to a file
 vshrink probe <input>                   # list streams (tracks) in a file
 ```
 
@@ -71,13 +73,16 @@ Presets are conservative convenience defaults, not official platform limits.
 
 ### convert
 
-Transcode to H.264/AAC mp4 and select specific tracks. Subtitles are dropped.
-Use `vshrink probe` first to find the track numbers.
+Transcode to H.264/AAC mp4 and select specific tracks. By default subtitles are
+dropped, but you can burn them into the picture (hardsub) instead. Use
+`vshrink probe` first to find the track numbers.
 
 ```bash
 vshrink convert movie.mkv                      # first video + first audio
 vshrink convert --audio-track 1 movie.mkv      # pick the 2nd audio track
 vshrink convert --video-track 0 --audio-track 1 -o out.mp4 movie.mkv
+vshrink convert --burn-subs subs.srt movie.mkv # hardsub an external file
+vshrink convert --burn-track 0 movie.mkv       # hardsub an embedded track
 ```
 
 | Option | Description |
@@ -87,7 +92,13 @@ vshrink convert --video-track 0 --audio-track 1 -o out.mp4 movie.mkv
 | `--crf <n>` | Quality (lower = better, default 23) |
 | `--audio <kbps>` | Audio bitrate in kbit/s (default 192) |
 | `--max-height <n>` | Cap output height in pixels |
+| `--burn-subs <file>` | Burn an external subtitle file (.srt/.ass) into the video |
+| `--burn-track <n>` | Burn an embedded subtitle track (by subtitle index) |
 | `-o, --output <path>` | Output path (single input only) |
+
+`--burn-subs` and `--burn-track` are mutually exclusive. Burn-in uses ffmpeg's
+`subtitles` filter and requires an ffmpeg build with **libass**; without it the
+command reports a clear error.
 
 ### concat
 
@@ -104,6 +115,41 @@ vshrink concat -o full.mp4 part1.mkv part2.mkv part3.mkv
 | `--crf <n>` | Quality (lower = better, default 23) |
 | `--audio <kbps>` | Audio bitrate in kbit/s (default 192) |
 | `--max-height <n>` | Cap output height in pixels |
+
+### gif
+
+Render a high-quality GIF using the two-pass palette method (`palettegen` +
+`paletteuse`) for sharp colors and minimal banding. Trim with `--start` /
+`--duration` for fast input seeking.
+
+```bash
+vshrink gif clip.mov                          # 12fps, 480px wide -> clip.gif
+vshrink gif --fps 15 --width 600 clip.mov
+vshrink gif --start 00:00:05 --duration 3 -o out.gif clip.mov
+```
+
+| Option | Description |
+| --- | --- |
+| `--fps <n>` | Frame rate (default 12) |
+| `--width <px>` | Output width; height keeps aspect ratio (default 480) |
+| `--start <ts>` | Start timestamp, e.g. `00:00:05` or `5` (maps to `-ss`) |
+| `--duration <sec>` | Clip length in seconds (maps to `-t`) |
+| `-o, --output <path>` | Output path (default `<name>.gif` next to input) |
+
+### extract-subs
+
+Extract a subtitle stream to a standalone file. The output extension picks the
+format (`.srt`, `.ass`, `.vtt`). Use `vshrink probe` to find subtitle tracks.
+
+```bash
+vshrink extract-subs -o out.srt movie.mkv     # first subtitle track
+vshrink extract-subs --track 1 -o eng.srt movie.mkv
+```
+
+| Option | Description |
+| --- | --- |
+| `--track <n>` | Subtitle track index (default 0) |
+| `-o, --output <path>` | Output path (required) |
 
 ### probe
 
@@ -129,11 +175,22 @@ playback). Without a target, it uses CRF quality-based encoding instead.
 ## Programmatic API
 
 ```ts
-import { shrink, convert, concat, listStreams, parseSize } from "@printemps-tokyo/vshrink";
+import {
+  shrink,
+  convert,
+  concat,
+  gif,
+  extractSubs,
+  listStreams,
+  parseSize,
+} from "@printemps-tokyo/vshrink";
 
 await shrink({ input: "clip.mov", targetBytes: parseSize("8MB") });
 await convert({ input: "movie.mkv", output: "out.mp4", audioTrack: 1 });
+await convert({ input: "movie.mkv", output: "subbed.mp4", burnSubsPath: "subs.srt" });
 await concat({ inputs: ["p1.mkv", "p2.mkv"], output: "full.mp4" });
+await gif({ input: "clip.mov", output: "clip.gif", fps: 15, width: 600 });
+await extractSubs({ input: "movie.mkv", output: "out.srt", track: 0 });
 const streams = await listStreams("movie.mkv");
 ```
 
