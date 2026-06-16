@@ -5,6 +5,7 @@ import { buildConcatList } from "./concat.js";
 import { buildPaletteGenFilter, buildPaletteUseFilter } from "./gif.js";
 import { escapeSubtitlesPath } from "./subtitles.js";
 import { resolveThumbTime } from "./thumb.js";
+import { buildTimecodeFilter, type TimecodeOptions } from "./timecode.js";
 
 const pexecFile = promisify(execFile);
 
@@ -224,6 +225,8 @@ export interface ConvertOptions {
   burnSubsPath?: string;
   /** Burn an embedded subtitle stream (by subtitle index) into the video. Needs libass. */
   burnTrack?: number;
+  /** Burn a running timecode overlay (ffmpeg drawtext; needs libfreetype). */
+  timecode?: TimecodeOptions;
 }
 
 /**
@@ -266,17 +269,19 @@ export async function convert(opts: ConvertOptions): Promise<void> {
     maxHeight,
     burnSubsPath,
     burnTrack,
+    timecode,
   } = opts;
 
   if (burnSubsPath !== undefined && burnTrack !== undefined) {
     throw new Error("--burn-subs and --burn-track are mutually exclusive");
   }
 
-  // Compose -vf from the optional scale and subtitles filters. Scale runs first
-  // so the subtitles are rendered at the final output resolution.
+  // Compose -vf from the optional scale, subtitles and timecode filters. Scale
+  // runs first so the overlays are rendered at the final output resolution.
   const filters = [
     scaleExpr(maxHeight),
     subtitlesFilter(input, burnSubsPath, burnTrack),
+    timecode ? buildTimecodeFilter(timecode) : undefined,
   ].filter((f): f is string => f !== undefined);
   const vf = filters.length > 0 ? ["-vf", filters.join(",")] : [];
 
@@ -306,7 +311,9 @@ export async function convert(opts: ConvertOptions): Promise<void> {
       output,
     ]);
   } catch (err) {
-    const message = (err as Error).message;
+    // Include stderr: ffmpeg prints the "No such filter" line there, and the
+    // error's own message may only carry the final summary line.
+    const message = `${(err as Error).message}\n${(err as { stderr?: string }).stderr ?? ""}`;
     // Only the genuine "filter not built in" signature should be reported as a
     // libass problem. Other burn-in failures (bad path, wrong si= index, etc.)
     // must surface their real ffmpeg error instead of a misleading message.
@@ -315,6 +322,13 @@ export async function convert(opts: ConvertOptions): Promise<void> {
       throw new Error(
         "subtitle burn-in failed: this ffmpeg build lacks the 'subtitles' filter " +
           "(libass). Install an ffmpeg built with --enable-libass.\n" +
+          message,
+      );
+    }
+    if (timecode && /(No such filter|Unknown filter):?\s*'?drawtext/i.test(message)) {
+      throw new Error(
+        "timecode burn-in failed: this ffmpeg build lacks the 'drawtext' filter " +
+          "(libfreetype). Install an ffmpeg built with --enable-libfreetype.\n" +
           message,
       );
     }

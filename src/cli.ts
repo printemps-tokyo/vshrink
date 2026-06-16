@@ -9,6 +9,7 @@ import {
   extractSubs,
   extractAudio,
   extractThumbnail,
+  isTimecodePosition,
   isAudioFormat,
   AUDIO_FORMATS,
   type AudioFormat,
@@ -108,11 +109,16 @@ Options:
   --max-height <n>     Cap output height in pixels
   --burn-subs <file>   Burn an external subtitle file (.srt/.ass) into the video
   --burn-track <n>     Burn an embedded subtitle track (by subtitle index)
+  --timecode           Burn a running timecode overlay (needs libfreetype)
+  --tc-position <pos>  Timecode corner: tl | tr | bl | br (default br)
+  --tc-size <px>       Timecode font size (default 24)
+  --font <path>        Font file for the timecode overlay
   -o, --output <path>  Output path (single input only)
 
 By default subtitles are dropped. --burn-subs and --burn-track hardsub the
 subtitles into the picture and are mutually exclusive; both require an ffmpeg
-build with libass. Use "vshrink probe <input>" to find track numbers.
+build with libass. --timecode overlays the running time and needs an ffmpeg
+build with libfreetype. Use "vshrink probe <input>" to find track numbers.
 `;
 
 const GIF_HELP = `vshrink gif - render a high-quality GIF via the palette method
@@ -321,6 +327,10 @@ async function runConvert(argv: string[]): Promise<number> {
       "max-height": { type: "string" },
       "burn-subs": { type: "string" },
       "burn-track": { type: "string" },
+      timecode: { type: "boolean", default: false },
+      "tc-position": { type: "string" },
+      "tc-size": { type: "string" },
+      font: { type: "string" },
       output: { type: "string", short: "o" },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -344,6 +354,18 @@ async function runConvert(argv: string[]): Promise<number> {
     );
     return 1;
   }
+  const tcPosition = values["tc-position"];
+  if (tcPosition !== undefined && !isTimecodePosition(tcPosition)) {
+    process.stderr.write("error: --tc-position must be one of tl, tr, bl, br\n");
+    return 1;
+  }
+  const timecode = values.timecode
+    ? {
+        position: tcPosition && isTimecodePosition(tcPosition) ? tcPosition : undefined,
+        fontSize: values["tc-size"] ? parsePositive("tc-size", values["tc-size"]) : undefined,
+        fontPath: values.font,
+      }
+    : undefined;
 
   let failed = 0;
   for (const input of positionals) {
@@ -360,6 +382,7 @@ async function runConvert(argv: string[]): Promise<number> {
         maxHeight: values["max-height"] ? parsePositive("max-height", values["max-height"]) : undefined,
         burnSubsPath: values["burn-subs"],
         burnTrack: values["burn-track"] ? parseTrack("burn-track", values["burn-track"]) : undefined,
+        timecode,
       });
       const { stat } = await import("node:fs/promises");
       process.stdout.write(`${input} -> ${output} ${formatSize((await stat(output)).size)}\n`);

@@ -85,6 +85,7 @@ vshrink convert --audio-track 1 movie.mkv      # pick the 2nd audio track
 vshrink convert --video-track 0 --audio-track 1 -o out.mp4 movie.mkv
 vshrink convert --burn-subs subs.srt movie.mkv # hardsub an external file
 vshrink convert --burn-track 0 movie.mkv       # hardsub an embedded track
+vshrink convert --timecode --tc-position br movie.mp4   # burn a running timecode
 ```
 
 | Option | Description |
@@ -96,11 +97,16 @@ vshrink convert --burn-track 0 movie.mkv       # hardsub an embedded track
 | `--max-height <n>` | Cap output height in pixels |
 | `--burn-subs <file>` | Burn an external subtitle file (.srt/.ass) into the video |
 | `--burn-track <n>` | Burn an embedded subtitle track (by subtitle index) |
+| `--timecode` | Burn a running timecode overlay (needs libfreetype) |
+| `--tc-position <pos>` | Timecode corner: `tl`/`tr`/`bl`/`br` (default `br`) |
+| `--tc-size <px>` | Timecode font size (default 24) |
+| `--font <path>` | Font file for the timecode overlay |
 | `-o, --output <path>` | Output path (single input only) |
 
 `--burn-subs` and `--burn-track` are mutually exclusive. Burn-in uses ffmpeg's
-`subtitles` filter and requires an ffmpeg build with **libass**; without it the
-command reports a clear error.
+`subtitles` filter and requires an ffmpeg build with **libass**. `--timecode`
+overlays the running playback time via the `drawtext` filter and requires an
+ffmpeg build with **libfreetype**; without it the command reports a clear error.
 
 ### concat
 

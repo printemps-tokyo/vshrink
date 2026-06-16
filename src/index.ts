@@ -35,6 +35,13 @@ export {
   type ThumbOptions,
 } from "./ffmpeg.js";
 export { resolveThumbTime } from "./thumb.js";
+export {
+  buildTimecodeFilter,
+  isTimecodePosition,
+  TIMECODE_POSITIONS,
+  type TimecodePosition,
+  type TimecodeOptions,
+} from "./timecode.js";
 export { buildConcatList, escapeConcatPath } from "./concat.js";
 export {
   audioFormatSpec,
