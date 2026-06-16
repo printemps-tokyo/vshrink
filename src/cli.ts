@@ -7,6 +7,10 @@ import {
   concat,
   gif,
   extractSubs,
+  extractAudio,
+  isAudioFormat,
+  AUDIO_FORMATS,
+  type AudioFormat,
   listStreams,
   formatSize,
   parseSize,
@@ -22,6 +26,7 @@ Usage:
   vshrink concat -o out.mp4 <input...>     Merge files into one mp4
   vshrink gif [options] <input>            High-quality GIF (palette method)
   vshrink extract-subs -o out.srt <input>  Extract a subtitle track to a file
+  vshrink audio [options] <input>          Extract audio (mp3/aac/wav/opus/flac)
   vshrink probe <input>                    List streams (tracks) in a file
 
 Run "vshrink <command> --help" for command-specific options.
@@ -32,6 +37,7 @@ Commands:
   concat        concatenate multiple inputs (re-encode) into one mp4
   gif           render a high-quality GIF via the two-pass palette method
   extract-subs  pull a subtitle stream out to a .srt/.ass/.vtt file
+  audio         extract an audio track to mp3/aac/m4a/wav/opus/flac
   probe         print the stream table to help choose track numbers
 
 Examples:
@@ -42,7 +48,22 @@ Examples:
   vshrink concat -o full.mp4 part1.mkv part2.mkv
   vshrink gif --fps 15 --width 600 clip.mov
   vshrink extract-subs -o out.srt movie.mkv
+  vshrink audio --format mp3 talk.mp4
   vshrink probe movie.mkv
+`;
+
+const AUDIO_HELP = `vshrink audio - extract an audio track to a standalone file
+
+Usage:
+  vshrink audio [options] <input>
+
+Options:
+  --format <fmt>       ${AUDIO_FORMATS.join(" | ")} (default mp3)
+  --audio-track <n>    Audio track index (default 0)
+  --bitrate <kbps>     Bitrate for lossy formats (default 192)
+  -o, --output <path>  Output path (default "<name>.<format>" next to input)
+
+wav and flac are lossless, so --bitrate is ignored for them.
 `;
 
 const SHRINK_HELP = `vshrink shrink - shrink a video toward a target file size
@@ -152,6 +173,7 @@ const COMMANDS = new Set([
   "concat",
   "gif",
   "extract-subs",
+  "audio",
   "probe",
 ]);
 
@@ -180,6 +202,8 @@ async function main(): Promise<number> {
       return runGif(rest);
     case "extract-subs":
       return runExtractSubs(rest);
+    case "audio":
+      return runAudio(rest);
     case "probe":
       return runProbe(rest);
     default:
@@ -470,6 +494,61 @@ async function runExtractSubs(argv: string[]): Promise<number> {
     process.stdout.write(
       `${input} -> ${values.output} ${formatSize((await stat(values.output)).size)}\n`,
     );
+    return 0;
+  } catch (err) {
+    process.stderr.write(`error: ${input}: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
+async function runAudio(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      format: { type: "string" },
+      "audio-track": { type: "string" },
+      bitrate: { type: "string" },
+      output: { type: "string", short: "o" },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+  if (values.help) {
+    process.stdout.write(AUDIO_HELP);
+    return 0;
+  }
+  if (positionals.length === 0) {
+    process.stderr.write("error: audio needs an input file\n\n" + AUDIO_HELP);
+    return 1;
+  }
+  if (positionals.length > 1) {
+    process.stderr.write("error: audio takes a single input\n");
+    return 1;
+  }
+
+  const format = values.format ?? "mp3";
+  if (!isAudioFormat(format)) {
+    process.stderr.write(
+      `error: --format must be one of ${AUDIO_FORMATS.join(", ")} (got "${format}")\n`,
+    );
+    return 1;
+  }
+
+  const input = positionals[0] as string;
+  const output =
+    values.output ?? join(dirname(input), `${basename(input, extname(input))}.${format}`);
+  try {
+    process.stderr.write(`  ${input}: extracting audio (${format})...\n`);
+    await extractAudio({
+      input,
+      output,
+      format: format as AudioFormat,
+      track: values["audio-track"] ? parseTrack("audio-track", values["audio-track"]) : undefined,
+      bitrateKbps: values.bitrate ? parsePositive("bitrate", values.bitrate) : undefined,
+    });
+    const { stat } = await import("node:fs/promises");
+    process.stdout.write(`${input} -> ${output} ${formatSize((await stat(output)).size)}\n`);
     return 0;
   } catch (err) {
     process.stderr.write(`error: ${input}: ${(err as Error).message}\n`);

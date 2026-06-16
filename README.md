@@ -37,6 +37,7 @@ vshrink convert [options] <input...>    # transcode to mp4, pick tracks, burn su
 vshrink concat -o out.mp4 <input...>    # merge files into one mp4
 vshrink gif [options] <input>           # high-quality GIF (palette method)
 vshrink extract-subs -o out.srt <input> # extract a subtitle track to a file
+vshrink audio [options] <input>         # extract audio (mp3/aac/wav/opus/flac)
 vshrink probe <input>                   # list streams (tracks) in a file
 ```
 
@@ -151,6 +152,24 @@ vshrink extract-subs --track 1 -o eng.srt movie.mkv
 | `--track <n>` | Subtitle track index (default 0) |
 | `-o, --output <path>` | Output path (required) |
 
+### audio
+
+Extract an audio track to a standalone file. The format picks the codec
+(`mp3`/`aac`/`m4a` lossy, `wav`/`flac` lossless, `opus`).
+
+```bash
+vshrink audio talk.mp4                       # -> talk.mp3 (192k)
+vshrink audio --format wav -o out.wav talk.mp4
+vshrink audio --format flac --audio-track 1 movie.mkv
+```
+
+| Option | Description |
+| --- | --- |
+| `--format <fmt>` | `mp3`, `aac`, `m4a`, `wav`, `opus`, `flac` (default `mp3`) |
+| `--audio-track <n>` | Audio track index (default 0) |
+| `--bitrate <kbps>` | Bitrate for lossy formats (default 192; ignored for wav/flac) |
+| `-o, --output <path>` | Output path (default `<name>.<format>` next to input) |
+
 ### probe
 
 ```bash
@@ -181,6 +200,7 @@ import {
   concat,
   gif,
   extractSubs,
+  extractAudio,
   listStreams,
   parseSize,
 } from "@printemps-tokyo/vshrink";
@@ -191,6 +211,7 @@ await convert({ input: "movie.mkv", output: "subbed.mp4", burnSubsPath: "subs.sr
 await concat({ inputs: ["p1.mkv", "p2.mkv"], output: "full.mp4" });
 await gif({ input: "clip.mov", output: "clip.gif", fps: 15, width: 600 });
 await extractSubs({ input: "movie.mkv", output: "out.srt", track: 0 });
+await extractAudio({ input: "talk.mp4", output: "talk.mp3", format: "mp3" });
 const streams = await listStreams("movie.mkv");
 ```
 

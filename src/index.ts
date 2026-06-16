@@ -23,14 +23,23 @@ export {
   concat,
   gif,
   extractSubs,
+  extractAudio,
   type ProbeResult,
   type StreamInfo,
   type ConvertOptions,
   type ConcatOptions,
   type GifOptions,
   type ExtractSubsOptions,
+  type AudioOptions,
 } from "./ffmpeg.js";
 export { buildConcatList, escapeConcatPath } from "./concat.js";
+export {
+  audioFormatSpec,
+  isAudioFormat,
+  AUDIO_FORMATS,
+  type AudioFormat,
+  type AudioFormatSpec,
+} from "./audio.js";
 export {
   buildPaletteGenFilter,
   buildPaletteUseFilter,

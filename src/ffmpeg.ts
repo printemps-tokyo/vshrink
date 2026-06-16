@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { audioFormatSpec, type AudioFormat } from "./audio.js";
 import { buildConcatList } from "./concat.js";
 import { buildPaletteGenFilter, buildPaletteUseFilter } from "./gif.js";
 import { escapeSubtitlesPath } from "./subtitles.js";
@@ -453,6 +454,38 @@ export async function extractSubs(opts: ExtractSubsOptions): Promise<void> {
     `0:s:${track}`,
     output,
   ]);
+}
+
+export interface AudioOptions {
+  input: string;
+  output: string;
+  /** Output format (mp3 | aac | m4a | wav | opus | flac). */
+  format: AudioFormat;
+  /** Audio stream index within its type (0 = first audio track). */
+  track?: number;
+  /** Bitrate in kbit/s for lossy formats (default 192). */
+  bitrateKbps?: number;
+}
+
+/** Extract (and re-encode) an audio track to a standalone audio file. */
+export async function extractAudio(opts: AudioOptions): Promise<void> {
+  const { input, output, format, track = 0, bitrateKbps = 192 } = opts;
+  const spec = audioFormatSpec(format);
+  const args = [
+    "-y",
+    "-i",
+    input,
+    "-map",
+    `0:a:${track}`,
+    "-vn",
+    "-c:a",
+    spec.codec,
+  ];
+  if (spec.lossy) {
+    args.push("-b:a", `${bitrateKbps}k`);
+  }
+  args.push(output);
+  await pexecFile("ffmpeg", args);
 }
 
 async function cleanupPassLogs(prefix: string): Promise<void> {
