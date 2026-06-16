@@ -24,6 +24,7 @@ export {
   gif,
   extractSubs,
   extractAudio,
+  extractThumbnail,
   type ProbeResult,
   type StreamInfo,
   type ConvertOptions,
@@ -31,7 +32,9 @@ export {
   type GifOptions,
   type ExtractSubsOptions,
   type AudioOptions,
+  type ThumbOptions,
 } from "./ffmpeg.js";
+export { resolveThumbTime } from "./thumb.js";
 export { buildConcatList, escapeConcatPath } from "./concat.js";
 export {
   audioFormatSpec,

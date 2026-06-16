@@ -8,6 +8,7 @@ import {
   gif,
   extractSubs,
   extractAudio,
+  extractThumbnail,
   isAudioFormat,
   AUDIO_FORMATS,
   type AudioFormat,
@@ -27,6 +28,7 @@ Usage:
   vshrink gif [options] <input>            High-quality GIF (palette method)
   vshrink extract-subs -o out.srt <input>  Extract a subtitle track to a file
   vshrink audio [options] <input>          Extract audio (mp3/aac/wav/opus/flac)
+  vshrink thumb [options] <input>          Grab a representative frame as an image
   vshrink probe <input>                    List streams (tracks) in a file
 
 Run "vshrink <command> --help" for command-specific options.
@@ -38,6 +40,7 @@ Commands:
   gif           render a high-quality GIF via the two-pass palette method
   extract-subs  pull a subtitle stream out to a .srt/.ass/.vtt file
   audio         extract an audio track to mp3/aac/m4a/wav/opus/flac
+  thumb         grab one frame as a jpg/png/webp (midpoint by default)
   probe         print the stream table to help choose track numbers
 
 Examples:
@@ -64,6 +67,17 @@ Options:
   -o, --output <path>  Output path (default "<name>.<format>" next to input)
 
 wav and flac are lossless, so --bitrate is ignored for them.
+`;
+
+const THUMB_HELP = `vshrink thumb - grab a single frame as an image
+
+Usage:
+  vshrink thumb [options] <input>
+
+Options:
+  --at <ts>            Timestamp to grab, e.g. 00:00:05 or 5 (default: midpoint)
+  --width <px>         Scale the output width; height keeps aspect ratio
+  -o, --output <path>  Output path (default "<name>.jpg"; ext sets the format)
 `;
 
 const SHRINK_HELP = `vshrink shrink - shrink a video toward a target file size
@@ -174,6 +188,7 @@ const COMMANDS = new Set([
   "gif",
   "extract-subs",
   "audio",
+  "thumb",
   "probe",
 ]);
 
@@ -204,6 +219,8 @@ async function main(): Promise<number> {
       return runExtractSubs(rest);
     case "audio":
       return runAudio(rest);
+    case "thumb":
+      return runThumb(rest);
     case "probe":
       return runProbe(rest);
     default:
@@ -546,6 +563,50 @@ async function runAudio(argv: string[]): Promise<number> {
       format: format as AudioFormat,
       track: values["audio-track"] ? parseTrack("audio-track", values["audio-track"]) : undefined,
       bitrateKbps: values.bitrate ? parsePositive("bitrate", values.bitrate) : undefined,
+    });
+    const { stat } = await import("node:fs/promises");
+    process.stdout.write(`${input} -> ${output} ${formatSize((await stat(output)).size)}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`error: ${input}: ${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
+async function runThumb(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      at: { type: "string" },
+      width: { type: "string" },
+      output: { type: "string", short: "o" },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+  if (values.help) {
+    process.stdout.write(THUMB_HELP);
+    return 0;
+  }
+  if (positionals.length === 0) {
+    process.stderr.write("error: thumb needs an input file\n\n" + THUMB_HELP);
+    return 1;
+  }
+  if (positionals.length > 1) {
+    process.stderr.write("error: thumb takes a single input\n");
+    return 1;
+  }
+
+  const input = positionals[0] as string;
+  const output = values.output ?? join(dirname(input), `${basename(input, extname(input))}.jpg`);
+  try {
+    process.stderr.write(`  ${input}: grabbing thumbnail...\n`);
+    await extractThumbnail({
+      input,
+      output,
+      at: values.at,
+      width: values.width ? parsePositive("width", values.width) : undefined,
     });
     const { stat } = await import("node:fs/promises");
     process.stdout.write(`${input} -> ${output} ${formatSize((await stat(output)).size)}\n`);

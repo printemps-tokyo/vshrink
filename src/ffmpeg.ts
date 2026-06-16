@@ -4,6 +4,7 @@ import { audioFormatSpec, type AudioFormat } from "./audio.js";
 import { buildConcatList } from "./concat.js";
 import { buildPaletteGenFilter, buildPaletteUseFilter } from "./gif.js";
 import { escapeSubtitlesPath } from "./subtitles.js";
+import { resolveThumbTime } from "./thumb.js";
 
 const pexecFile = promisify(execFile);
 
@@ -486,6 +487,39 @@ export async function extractAudio(opts: AudioOptions): Promise<void> {
   }
   args.push(output);
   await pexecFile("ffmpeg", args);
+}
+
+export interface ThumbOptions {
+  input: string;
+  output: string;
+  /** Seek timestamp (ffmpeg -ss form). Defaults to the clip midpoint. */
+  at?: string;
+  /** Output width in pixels; height keeps aspect ratio. */
+  width?: number;
+}
+
+/** Extract a single representative frame as an image (jpg/png/webp by ext). */
+export async function extractThumbnail(opts: ThumbOptions): Promise<void> {
+  const { input, output, at, width } = opts;
+  // When no timestamp is given, seek to the midpoint via ffprobe duration.
+  let ss = at;
+  if (ss === undefined || ss.trim() === "") {
+    const info = await probe(input);
+    ss = resolveThumbTime(info.durationSec);
+  }
+  const scale = width ? ["-vf", `scale=${width}:-2`] : [];
+  // -ss before -i for fast input seeking; -frames:v 1 grabs one frame.
+  await pexecFile("ffmpeg", [
+    "-y",
+    "-ss",
+    ss,
+    "-i",
+    input,
+    "-frames:v",
+    "1",
+    ...scale,
+    output,
+  ]);
 }
 
 async function cleanupPassLogs(prefix: string): Promise<void> {

@@ -38,6 +38,7 @@ vshrink concat -o out.mp4 <input...>    # merge files into one mp4
 vshrink gif [options] <input>           # high-quality GIF (palette method)
 vshrink extract-subs -o out.srt <input> # extract a subtitle track to a file
 vshrink audio [options] <input>         # extract audio (mp3/aac/wav/opus/flac)
+vshrink thumb [options] <input>         # grab one frame as an image
 vshrink probe <input>                   # list streams (tracks) in a file
 ```
 
@@ -170,6 +171,24 @@ vshrink audio --format flac --audio-track 1 movie.mkv
 | `--bitrate <kbps>` | Bitrate for lossy formats (default 192; ignored for wav/flac) |
 | `-o, --output <path>` | Output path (default `<name>.<format>` next to input) |
 
+### thumb
+
+Grab one representative frame as an image. The output extension picks the
+format (`.jpg`/`.png`/`.webp`); by default the frame is taken from the clip
+midpoint.
+
+```bash
+vshrink thumb clip.mov                        # -> clip.jpg (midpoint)
+vshrink thumb --at 00:00:05 -o cover.png clip.mov
+vshrink thumb --at 5 --width 320 clip.mov
+```
+
+| Option | Description |
+| --- | --- |
+| `--at <ts>` | Timestamp to grab, e.g. `00:00:05` or `5` (default: midpoint) |
+| `--width <px>` | Scale the output width; height keeps aspect ratio |
+| `-o, --output <path>` | Output path (default `<name>.jpg`; ext sets the format) |
+
 ### probe
 
 ```bash
@@ -201,6 +220,7 @@ import {
   gif,
   extractSubs,
   extractAudio,
+  extractThumbnail,
   listStreams,
   parseSize,
 } from "@printemps-tokyo/vshrink";
@@ -212,6 +232,7 @@ await concat({ inputs: ["p1.mkv", "p2.mkv"], output: "full.mp4" });
 await gif({ input: "clip.mov", output: "clip.gif", fps: 15, width: 600 });
 await extractSubs({ input: "movie.mkv", output: "out.srt", track: 0 });
 await extractAudio({ input: "talk.mp4", output: "talk.mp3", format: "mp3" });
+await extractThumbnail({ input: "clip.mov", output: "clip.jpg", at: "5" });
 const streams = await listStreams("movie.mkv");
 ```
 
