@@ -86,6 +86,10 @@ export interface EncodeOptions {
   maxHeight?: number;
   /** CRF value for quality-based mode (when no target size). */
   crf?: number;
+  /** Trim: start timestamp (ffmpeg -ss form), before -i for fast seeking. */
+  start?: string;
+  /** Trim: output duration in seconds (ffmpeg -t). */
+  durationSec?: number;
   onProgress?: (pass: 1 | 2 | "crf") => void;
 }
 
@@ -95,16 +99,26 @@ function scaleFilter(maxHeight?: number): string[] {
   return ["-vf", `scale=-2:'min(${maxHeight},ih)'`];
 }
 
+/** -ss (before -i) and -t (after -i) trim arguments. */
+function seekArgs(start?: string): string[] {
+  return start !== undefined ? ["-ss", start] : [];
+}
+function durationArgs(durationSec?: number): string[] {
+  return durationSec !== undefined ? ["-t", String(durationSec)] : [];
+}
+
 /** Two-pass H.264 encode targeting a specific video bitrate. */
 export async function encodeTwoPass(opts: EncodeOptions): Promise<void> {
-  const { input, output, videoKbps, audioKbps, hasAudio, maxHeight } = opts;
+  const { input, output, videoKbps, audioKbps, hasAudio, maxHeight, start, durationSec } = opts;
   const scale = scaleFilter(maxHeight);
   const passLogPrefix = `${output}.vshrink-pass`;
 
   const common = [
     "-y",
+    ...seekArgs(start),
     "-i",
     input,
+    ...durationArgs(durationSec),
     "-c:v",
     "libx264",
     "-b:v",
@@ -146,15 +160,17 @@ export async function encodeTwoPass(opts: EncodeOptions): Promise<void> {
 
 /** Quality-based (CRF) encode when no target size is given. */
 export async function encodeCrf(opts: EncodeOptions): Promise<void> {
-  const { input, output, audioKbps, hasAudio, maxHeight, crf = 23 } = opts;
+  const { input, output, audioKbps, hasAudio, maxHeight, crf = 23, start, durationSec } = opts;
   opts.onProgress?.("crf");
   const audioArgs = hasAudio
     ? ["-c:a", "aac", "-b:a", `${audioKbps}k`]
     : ["-an"];
   await pexecFile("ffmpeg", [
     "-y",
+    ...seekArgs(start),
     "-i",
     input,
+    ...durationArgs(durationSec),
     "-c:v",
     "libx264",
     "-crf",

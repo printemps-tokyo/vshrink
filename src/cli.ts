@@ -93,6 +93,8 @@ Options:
       --max-height <n>  Cap output height in pixels
       --audio <kbps>    Audio bitrate in kbit/s
       --crf <n>         Quality for size-less presets (lower = better, default 23)
+      --start <ts>      Trim: start at this timestamp (00:00:05 or 5)
+      --duration <sec>  Trim: keep this many seconds
       --dry-run         Print the plan without encoding
 `;
 
@@ -245,6 +247,8 @@ async function runShrink(argv: string[]): Promise<number> {
       "max-height": { type: "string" },
       audio: { type: "string" },
       crf: { type: "string" },
+      start: { type: "string" },
+      duration: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -279,6 +283,8 @@ async function runShrink(argv: string[]): Promise<number> {
         maxHeight,
         audioKbps,
         crf,
+        start: values.start,
+        durationSec: values.duration ? parsePositive("duration", values.duration) : undefined,
         dryRun: values["dry-run"],
         onProgress: (pass) =>
           process.stderr.write(

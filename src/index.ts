@@ -13,6 +13,7 @@ import {
   type ProbeResult,
 } from "./ffmpeg.js";
 import { PRESETS, DEFAULT_PRESET, isPreset } from "./presets.js";
+import { parseTimestampSec } from "./timestamp.js";
 
 export { planBitrate, parseSize, formatSize } from "./bitrate.js";
 export { PRESETS, DEFAULT_PRESET, isPreset, type Preset } from "./presets.js";
@@ -35,6 +36,7 @@ export {
   type ThumbOptions,
 } from "./ffmpeg.js";
 export { resolveThumbTime } from "./thumb.js";
+export { parseTimestampSec } from "./timestamp.js";
 export {
   buildTimecodeFilter,
   isTimecodePosition,
@@ -71,6 +73,10 @@ export interface ShrinkOptions {
   audioKbps?: number;
   /** CRF used when there is no target size. Lower = higher quality. */
   crf?: number;
+  /** Trim: start timestamp (ffmpeg -ss form, e.g. "00:00:05" or "5"). */
+  start?: string;
+  /** Trim: output duration in seconds. */
+  durationSec?: number;
   /** Plan only; do not run ffmpeg. */
   dryRun?: boolean;
   onProgress?: (pass: 1 | 2 | "crf") => void;
@@ -117,10 +123,20 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
   const maxHeight = opts.maxHeight ?? preset.maxHeight;
   const audioKbps = opts.audioKbps ?? preset.audioKbps;
 
+  // Effective (post-trim) duration drives the target-size bitrate budget.
+  const startSec = opts.start !== undefined ? parseTimestampSec(opts.start) : 0;
+  const effectiveDurationSec =
+    opts.durationSec !== undefined
+      ? Math.min(opts.durationSec, Math.max(0, info.durationSec - startSec))
+      : Math.max(0, info.durationSec - startSec);
+  if ((opts.start !== undefined || opts.durationSec !== undefined) && effectiveDurationSec <= 0) {
+    throw new Error("trim leaves no video (check --start / --duration)");
+  }
+
   if (targetBytes !== undefined) {
     const plan = planBitrate({
       targetBytes,
-      durationSec: info.durationSec,
+      durationSec: effectiveDurationSec,
       audioKbps: info.hasAudio ? audioKbps : 0,
     });
 
@@ -132,6 +148,8 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
         audioKbps: plan.audioKbps,
         hasAudio: info.hasAudio,
         maxHeight,
+        start: opts.start,
+        durationSec: opts.durationSec,
         onProgress: opts.onProgress,
       });
     }
@@ -158,6 +176,8 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
       hasAudio: info.hasAudio,
       maxHeight,
       crf: opts.crf,
+      start: opts.start,
+      durationSec: opts.durationSec,
       onProgress: opts.onProgress,
     });
   }

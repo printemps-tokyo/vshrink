@@ -62,6 +62,8 @@ vshrink *.mov                    # batch
 | `--max-height <n>` | Cap output height in pixels |
 | `--audio <kbps>` | Audio bitrate in kbit/s |
 | `--crf <n>` | Quality for size-less presets (lower = better, default 23) |
+| `--start <ts>` | Trim: start at this timestamp (`00:00:05` or `5`) |
+| `--duration <sec>` | Trim: keep this many seconds |
 | `--dry-run` | Print the plan without encoding |
 
 Presets are conservative convenience defaults, not official platform limits.
