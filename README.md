@@ -23,11 +23,16 @@ turns each of these into a single command.
 
 ## Install
 
+Not published to npm yet — install from source:
+
 ```bash
-npm install -g @printemps-tokyo/vshrink
-# or run once:
-npx @printemps-tokyo/vshrink clip.mov
+git clone https://github.com/printemps-tokyo/vshrink
+cd vshrink
+npm install && npm run build
+npm link   # optional: puts the `vshrink` command on your PATH
 ```
+
+Then run `vshrink …` (after `npm link`), or `node dist/cli.js …` from the clone.
 
 ## Commands
 
