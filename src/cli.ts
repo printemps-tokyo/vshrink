@@ -96,6 +96,7 @@ Options:
       --start <ts>      Trim: start at this timestamp (00:00:05 or 5)
       --duration <sec>  Trim: keep this many seconds
       --dry-run         Print the plan without encoding
+      --print-cmd       Print the exact ffmpeg command(s) without encoding
 `;
 
 const CONVERT_HELP = `vshrink convert - transcode to H.264/AAC mp4 with track selection
@@ -250,6 +251,7 @@ async function runShrink(argv: string[]): Promise<number> {
       start: { type: "string" },
       duration: { type: "string" },
       "dry-run": { type: "boolean", default: false },
+      "print-cmd": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -286,13 +288,16 @@ async function runShrink(argv: string[]): Promise<number> {
         start: values.start,
         durationSec: values.duration ? parsePositive("duration", values.duration) : undefined,
         dryRun: values["dry-run"],
+        printCmd: values["print-cmd"],
         onProgress: (pass) =>
           process.stderr.write(
             `  ${input}: ${pass === "crf" ? "encoding" : `pass ${pass}/2`}...\n`,
           ),
       });
 
-      if (res.dryRun) {
+      if (res.commands) {
+        process.stdout.write(res.commands.map((c) => `${c}\n`).join(""));
+      } else if (res.dryRun) {
         const plan = res.plan
           ? `video ${res.plan.videoKbps}k + audio ${res.plan.audioKbps}k`
           : `crf ${crf ?? 23}`;

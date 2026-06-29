@@ -56,6 +56,7 @@ vshrink clip.mov                 # 1080p quality-based compression
 vshrink -p discord clip.mov      # aim for 8MB
 vshrink -t 6MB -o out.mp4 clip.mov
 vshrink --dry-run -t 6MB clip.mov  # show the plan, no encoding
+vshrink --print-cmd -t 6MB clip.mov  # print the exact ffmpeg command(s)
 vshrink *.mov                    # batch
 ```
 
@@ -70,6 +71,11 @@ vshrink *.mov                    # batch
 | `--start <ts>` | Trim: start at this timestamp (`00:00:05` or `5`) |
 | `--duration <sec>` | Trim: keep this many seconds |
 | `--dry-run` | Print the plan without encoding |
+| `--print-cmd` | Print the exact ffmpeg command(s) without encoding |
+
+`--print-cmd` writes the shell-quoted ffmpeg command line(s) it would run (two
+lines for a two-pass target-size encode) and exits without touching any file, so
+you can inspect, tweak, or learn from the command, or paste it into a script.
 
 Presets are conservative convenience defaults, not official platform limits.
 

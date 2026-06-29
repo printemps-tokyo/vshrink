@@ -14,6 +14,7 @@ import {
 } from "./ffmpeg.js";
 import { PRESETS, DEFAULT_PRESET, isPreset } from "./presets.js";
 import { parseTimestampSec } from "./timestamp.js";
+import { buildTwoPassArgs, buildCrfArgs, formatCommand, type EncodeArgsInput } from "./command.js";
 
 export { planBitrate, parseSize, formatSize } from "./bitrate.js";
 export { PRESETS, DEFAULT_PRESET, isPreset, type Preset } from "./presets.js";
@@ -45,6 +46,15 @@ export {
   type TimecodeOptions,
 } from "./timecode.js";
 export { buildConcatList, escapeConcatPath } from "./concat.js";
+export {
+  buildTwoPassArgs,
+  buildCrfArgs,
+  formatCommand,
+  quoteArg,
+  twoPassLogPrefix,
+  nullDevice,
+  type EncodeArgsInput,
+} from "./command.js";
 export {
   audioFormatSpec,
   isAudioFormat,
@@ -79,6 +89,8 @@ export interface ShrinkOptions {
   durationSec?: number;
   /** Plan only; do not run ffmpeg. */
   dryRun?: boolean;
+  /** Print the exact ffmpeg command(s) without encoding. */
+  printCmd?: boolean;
   onProgress?: (pass: 1 | 2 | "crf") => void;
 }
 
@@ -92,6 +104,8 @@ export interface ShrinkResult {
   plan?: BitratePlan;
   mode: "two-pass" | "crf";
   dryRun: boolean;
+  /** The ffmpeg command line(s), present only when printCmd was requested. */
+  commands?: string[];
 }
 
 function defaultOutput(input: string): string {
@@ -123,6 +137,9 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
   const maxHeight = opts.maxHeight ?? preset.maxHeight;
   const audioKbps = opts.audioKbps ?? preset.audioKbps;
 
+  // --dry-run and --print-cmd both skip encoding (and the output stat).
+  const noRun = Boolean(opts.dryRun || opts.printCmd);
+
   // Effective (post-trim) duration drives the target-size bitrate budget.
   const startSec = opts.start !== undefined ? parseTimestampSec(opts.start) : 0;
   const effectiveDurationSec =
@@ -140,56 +157,62 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
       audioKbps: info.hasAudio ? audioKbps : 0,
     });
 
-    if (!opts.dryRun) {
-      await encodeTwoPass({
-        input: opts.input,
-        output,
-        videoKbps: plan.videoKbps,
-        audioKbps: plan.audioKbps,
-        hasAudio: info.hasAudio,
-        maxHeight,
-        start: opts.start,
-        durationSec: opts.durationSec,
-        onProgress: opts.onProgress,
-      });
+    const encodeArgs: EncodeArgsInput = {
+      input: opts.input,
+      output,
+      videoKbps: plan.videoKbps,
+      audioKbps: plan.audioKbps,
+      hasAudio: info.hasAudio,
+      maxHeight,
+      start: opts.start,
+      durationSec: opts.durationSec,
+    };
+
+    if (!noRun) {
+      await encodeTwoPass({ ...encodeArgs, onProgress: opts.onProgress });
     }
 
     return {
       input: opts.input,
       output,
       inputBytes,
-      outputBytes: opts.dryRun ? undefined : (await stat(output)).size,
+      outputBytes: noRun ? undefined : (await stat(output)).size,
       probe: info,
       plan,
       mode: "two-pass",
       dryRun: Boolean(opts.dryRun),
+      commands: opts.printCmd
+        ? buildTwoPassArgs(encodeArgs).map((args) => formatCommand("ffmpeg", args))
+        : undefined,
     };
   }
 
   // Quality-based mode.
-  if (!opts.dryRun) {
-    await encodeCrf({
-      input: opts.input,
-      output,
-      videoKbps: 0,
-      audioKbps,
-      hasAudio: info.hasAudio,
-      maxHeight,
-      crf: opts.crf,
-      start: opts.start,
-      durationSec: opts.durationSec,
-      onProgress: opts.onProgress,
-    });
+  const crfArgs: EncodeArgsInput = {
+    input: opts.input,
+    output,
+    videoKbps: 0,
+    audioKbps,
+    hasAudio: info.hasAudio,
+    maxHeight,
+    crf: opts.crf,
+    start: opts.start,
+    durationSec: opts.durationSec,
+  };
+
+  if (!noRun) {
+    await encodeCrf({ ...crfArgs, onProgress: opts.onProgress });
   }
 
   return {
     input: opts.input,
     output,
     inputBytes,
-    outputBytes: opts.dryRun ? undefined : (await stat(output)).size,
+    outputBytes: noRun ? undefined : (await stat(output)).size,
     probe: info,
     mode: "crf",
     dryRun: Boolean(opts.dryRun),
+    commands: opts.printCmd ? [formatCommand("ffmpeg", buildCrfArgs(crfArgs))] : undefined,
   };
 }
 

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { audioFormatSpec, type AudioFormat } from "./audio.js";
+import { buildTwoPassArgs, buildCrfArgs, twoPassLogPrefix } from "./command.js";
 import { buildConcatList } from "./concat.js";
 import { buildPaletteGenFilter, buildPaletteUseFilter } from "./gif.js";
 import { escapeSubtitlesPath } from "./subtitles.js";
@@ -99,90 +100,20 @@ function scaleFilter(maxHeight?: number): string[] {
   return ["-vf", `scale=-2:'min(${maxHeight},ih)'`];
 }
 
-/** -ss (before -i) and -t (after -i) trim arguments. */
-function seekArgs(start?: string): string[] {
-  return start !== undefined ? ["-ss", start] : [];
-}
-function durationArgs(durationSec?: number): string[] {
-  return durationSec !== undefined ? ["-t", String(durationSec)] : [];
-}
-
 /** Two-pass H.264 encode targeting a specific video bitrate. */
 export async function encodeTwoPass(opts: EncodeOptions): Promise<void> {
-  const { input, output, videoKbps, audioKbps, hasAudio, maxHeight, start, durationSec } = opts;
-  const scale = scaleFilter(maxHeight);
-  const passLogPrefix = `${output}.vshrink-pass`;
-
-  const common = [
-    "-y",
-    ...seekArgs(start),
-    "-i",
-    input,
-    ...durationArgs(durationSec),
-    "-c:v",
-    "libx264",
-    "-b:v",
-    `${videoKbps}k`,
-    "-preset",
-    "medium",
-    ...scale,
-    "-passlogfile",
-    passLogPrefix,
-  ];
-
+  const [pass1, pass2] = buildTwoPassArgs(opts);
   opts.onProgress?.(1);
-  await pexecFile("ffmpeg", [
-    ...common,
-    "-pass",
-    "1",
-    "-an",
-    "-f",
-    "null",
-    process.platform === "win32" ? "NUL" : "/dev/null",
-  ]);
-
+  await pexecFile("ffmpeg", pass1);
   opts.onProgress?.(2);
-  const audioArgs = hasAudio
-    ? ["-c:a", "aac", "-b:a", `${audioKbps}k`]
-    : ["-an"];
-  await pexecFile("ffmpeg", [
-    ...common,
-    "-pass",
-    "2",
-    ...audioArgs,
-    "-movflags",
-    "+faststart",
-    output,
-  ]);
-
-  await cleanupPassLogs(passLogPrefix);
+  await pexecFile("ffmpeg", pass2);
+  await cleanupPassLogs(twoPassLogPrefix(opts.output));
 }
 
 /** Quality-based (CRF) encode when no target size is given. */
 export async function encodeCrf(opts: EncodeOptions): Promise<void> {
-  const { input, output, audioKbps, hasAudio, maxHeight, crf = 23, start, durationSec } = opts;
   opts.onProgress?.("crf");
-  const audioArgs = hasAudio
-    ? ["-c:a", "aac", "-b:a", `${audioKbps}k`]
-    : ["-an"];
-  await pexecFile("ffmpeg", [
-    "-y",
-    ...seekArgs(start),
-    "-i",
-    input,
-    ...durationArgs(durationSec),
-    "-c:v",
-    "libx264",
-    "-crf",
-    String(crf),
-    "-preset",
-    "medium",
-    ...scaleFilter(maxHeight),
-    ...audioArgs,
-    "-movflags",
-    "+faststart",
-    output,
-  ]);
+  await pexecFile("ffmpeg", buildCrfArgs(opts));
 }
 
 export interface StreamInfo {
