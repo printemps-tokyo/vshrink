@@ -19,6 +19,7 @@ import {
   PRESETS,
   DEFAULT_PRESET,
 } from "./index.js";
+import { defaultOutput, parsePositive, parseTrack } from "./options.js";
 
 const HELP = `vshrink - ffmpeg helpers for shrinking and converting videos
 
@@ -116,7 +117,7 @@ Options:
   --tc-position <pos>  Timecode corner: tl | tr | bl | br (default br)
   --tc-size <px>       Timecode font size (default 24)
   --font <path>        Font file for the timecode overlay
-  -o, --output <path>  Output path (single input only)
+  -o, --output <path>  Output path (default "<name>.convert.mp4"; single input only)
 
 By default subtitles are dropped. --burn-subs and --burn-track hardsub the
 subtitles into the picture and are mutually exclusive; both require an ffmpeg
@@ -165,30 +166,6 @@ Options:
 
 Inputs are re-encoded so files with different codecs/resolutions still join.
 `;
-
-function defaultOutput(input: string, suffix: string): string {
-  const ext = extname(input);
-  const base = basename(input, ext);
-  return join(dirname(input), `${base}.${suffix}.mp4`);
-}
-
-/** Parse a CLI value that must be a positive number, or throw a clear error. */
-function parsePositive(name: string, value: string): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) {
-    throw new Error(`--${name} must be a positive number (got "${value}")`);
-  }
-  return n;
-}
-
-/** Parse a CLI value that must be a non-negative integer (e.g. a track index). */
-function parseTrack(name: string, value: string): number {
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 0) {
-    throw new Error(`--${name} must be a non-negative integer (got "${value}")`);
-  }
-  return n;
-}
 
 const COMMANDS = new Set([
   "shrink",
@@ -270,9 +247,11 @@ async function runShrink(argv: string[]): Promise<number> {
   }
 
   const targetBytes = values.target ? parseSize(values.target) : undefined;
-  const maxHeight = values["max-height"] ? Number(values["max-height"]) : undefined;
-  const audioKbps = values.audio ? Number(values.audio) : undefined;
-  const crf = values.crf ? Number(values.crf) : undefined;
+  const maxHeight = values["max-height"]
+    ? parsePositive("max-height", values["max-height"])
+    : undefined;
+  const audioKbps = values.audio ? parsePositive("audio", values.audio) : undefined;
+  const crf = values.crf ? parsePositive("crf", values.crf) : undefined;
 
   let failed = 0;
   for (const input of positionals) {
@@ -380,7 +359,7 @@ async function runConvert(argv: string[]): Promise<number> {
 
   let failed = 0;
   for (const input of positionals) {
-    const output = values.output ?? defaultOutput(input, "mp4");
+    const output = values.output ?? defaultOutput(input, "convert");
     try {
       process.stderr.write(`  ${input}: converting...\n`);
       await convert({
@@ -436,9 +415,11 @@ async function runConcat(argv: string[]): Promise<number> {
     await concat({
       inputs: positionals,
       output: values.output,
-      crf: values.crf ? Number(values.crf) : undefined,
-      audioKbps: values.audio ? Number(values.audio) : undefined,
-      maxHeight: values["max-height"] ? Number(values["max-height"]) : undefined,
+      crf: values.crf ? parsePositive("crf", values.crf) : undefined,
+      audioKbps: values.audio ? parsePositive("audio", values.audio) : undefined,
+      maxHeight: values["max-height"]
+        ? parsePositive("max-height", values["max-height"])
+        : undefined,
     });
     const { stat } = await import("node:fs/promises");
     process.stdout.write(

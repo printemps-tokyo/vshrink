@@ -3,8 +3,8 @@
  * Shrink a video toward a target file size using ffmpeg.
  */
 import { stat } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
 import { planBitrate, formatSize, type BitratePlan } from "./bitrate.js";
+import { defaultOutput } from "./options.js";
 import {
   assertFfmpeg,
   probe,
@@ -108,12 +108,6 @@ export interface ShrinkResult {
   commands?: string[];
 }
 
-function defaultOutput(input: string): string {
-  const ext = extname(input);
-  const base = basename(input, ext);
-  return join(dirname(input), `${base}.vshrink.mp4`);
-}
-
 /**
  * Shrink a single video. With a target size, uses two-pass H.264 to hit it;
  * otherwise falls back to quality-based (CRF) encoding.
@@ -131,7 +125,7 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
 
   const inputBytes = (await stat(opts.input)).size;
   const info = await probe(opts.input);
-  const output = opts.output ?? defaultOutput(opts.input);
+  const output = opts.output ?? defaultOutput(opts.input, "vshrink");
 
   const targetBytes = opts.targetBytes ?? preset.targetBytes;
   const maxHeight = opts.maxHeight ?? preset.maxHeight;

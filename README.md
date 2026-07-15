@@ -93,7 +93,7 @@ dropped, but you can burn them into the picture (hardsub) instead. Use
 `vshrink probe` first to find the track numbers.
 
 ```bash
-vshrink convert movie.mkv                      # first video + first audio
+vshrink convert movie.mkv                      # -> movie.convert.mp4
 vshrink convert --audio-track 1 movie.mkv      # pick the 2nd audio track
 vshrink convert --video-track 0 --audio-track 1 -o out.mp4 movie.mkv
 vshrink convert --burn-subs subs.srt movie.mkv # hardsub an external file
@@ -114,7 +114,7 @@ vshrink convert --timecode --tc-position br movie.mp4   # burn a running timecod
 | `--tc-position <pos>` | Timecode corner: `tl`/`tr`/`bl`/`br` (default `br`) |
 | `--tc-size <px>` | Timecode font size (default 24) |
 | `--font <path>` | Font file for the timecode overlay |
-| `-o, --output <path>` | Output path (single input only) |
+| `-o, --output <path>` | Output path (default `<name>.convert.mp4`; single input only) |
 
 `--burn-subs` and `--burn-track` are mutually exclusive. Burn-in uses ffmpeg's
 `subtitles` filter and requires an ffmpeg build with **libass**. `--timecode`
