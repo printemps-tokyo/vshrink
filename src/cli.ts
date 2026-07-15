@@ -20,6 +20,7 @@ import {
   DEFAULT_PRESET,
 } from "./index.js";
 import { defaultOutput, parseNonNegative, parsePositive, parseTrack } from "./options.js";
+import { isParseArgsError, usageError } from "./usage.js";
 
 const HELP = `vshrink - ffmpeg helpers for shrinking and converting videos
 
@@ -207,23 +208,33 @@ async function main(): Promise<number> {
   const command = COMMANDS.has(head) ? head : "shrink";
   const rest = COMMANDS.has(head) ? argv.slice(1) : argv;
 
-  switch (command) {
-    case "convert":
-      return runConvert(rest);
-    case "concat":
-      return runConcat(rest);
-    case "gif":
-      return runGif(rest);
-    case "extract-subs":
-      return runExtractSubs(rest);
-    case "audio":
-      return runAudio(rest);
-    case "thumb":
-      return runThumb(rest);
-    case "probe":
-      return runProbe(rest);
-    default:
-      return runShrink(rest);
+  try {
+    switch (command) {
+      case "convert":
+        return await runConvert(rest);
+      case "concat":
+        return await runConcat(rest);
+      case "gif":
+        return await runGif(rest);
+      case "extract-subs":
+        return await runExtractSubs(rest);
+      case "audio":
+        return await runAudio(rest);
+      case "thumb":
+        return await runThumb(rest);
+      case "probe":
+        return await runProbe(rest);
+      default:
+        return await runShrink(rest);
+    }
+  } catch (err) {
+    // A failed parseArgs (unknown/invalid option) should guide the user to the
+    // relevant command's help. Other errors fall through to the top-level catch.
+    if (isParseArgsError(err)) {
+      process.stderr.write(usageError(err, `vshrink ${command}`));
+      return 1;
+    }
+    throw err;
   }
 }
 
