@@ -52,8 +52,11 @@ export function buildTwoPassArgs(
   o: EncodeArgsInput,
   platform: NodeJS.Platform = process.platform,
 ): [string[], string[]] {
+  // -nostats stops ffmpeg from streaming per-frame progress lines to stderr,
+  // which would overflow execFile's buffered stderr on long encodes.
   const common = [
     "-y",
+    "-nostats",
     ...seekArgs(o.start),
     "-i",
     o.input,
@@ -85,6 +88,7 @@ export function buildTwoPassArgs(
 export function buildCrfArgs(o: EncodeArgsInput): string[] {
   return [
     "-y",
+    "-nostats",
     ...seekArgs(o.start),
     "-i",
     o.input,

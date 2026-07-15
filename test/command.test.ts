@@ -73,8 +73,14 @@ describe("buildTwoPassArgs", () => {
     );
     expect(pass2).toContain("-vf");
     expect(pass2).toContain("scale=-2:'min(720,ih)'");
-    expect(pass2.slice(0, 3)).toEqual(["-y", "-ss", "5"]);
+    expect(pass2.slice(0, 4)).toEqual(["-y", "-nostats", "-ss", "5"]);
     expect(pass2).toContain("-t");
+  });
+
+  it("disables per-frame stats in both passes (stderr stays bounded)", () => {
+    const [pass1, pass2] = buildTwoPassArgs(base, "linux");
+    expect(pass1).toContain("-nostats");
+    expect(pass2).toContain("-nostats");
   });
 });
 
@@ -85,5 +91,9 @@ describe("buildCrfArgs", () => {
     const def = buildCrfArgs({ ...base, videoKbps: 0 });
     expect(def[def.indexOf("-crf") + 1]).toBe("23");
     expect(args[args.length - 1]).toBe("out.mp4");
+  });
+
+  it("disables per-frame stats (stderr stays bounded)", () => {
+    expect(buildCrfArgs({ ...base, videoKbps: 0 })).toContain("-nostats");
   });
 });

@@ -8,7 +8,20 @@ import { escapeSubtitlesPath } from "./subtitles.js";
 import { resolveThumbTime } from "./thumb.js";
 import { buildTimecodeFilter, type TimecodeOptions } from "./timecode.js";
 
-const pexecFile = promisify(execFile);
+const execFileAsync = promisify(execFile);
+
+// ffmpeg writes a lot to stderr (banners, stream maps, progress). The Node
+// default maxBuffer (1 MiB) can be exceeded on long encodes, which kills the
+// child with a "maxBuffer length exceeded" error, so give every ffmpeg/ffprobe
+// invocation plenty of headroom.
+const MAX_BUFFER = 64 * 1024 * 1024;
+
+function pexecFile(
+  bin: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync(bin, args, { maxBuffer: MAX_BUFFER });
+}
 
 export interface ProbeResult {
   /** Duration in seconds. */
