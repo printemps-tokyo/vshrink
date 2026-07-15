@@ -44,7 +44,7 @@ vshrink gif [options] <input>           # high-quality GIF (palette method)
 vshrink extract-subs -o out.srt <input> # extract a subtitle track to a file
 vshrink audio [options] <input>         # extract audio (mp3/aac/wav/opus/flac)
 vshrink thumb [options] <input>         # grab one frame as an image
-vshrink probe <input>                   # list streams (tracks) in a file
+vshrink probe [--json] <input>          # list streams (tracks) in a file
 ```
 
 Run `vshrink <command> --help` for command-specific options.
@@ -215,7 +215,18 @@ vshrink probe movie.mkv
 #  #0 video track 0  h264 1920x1080
 #  #1 audio track 0  aac 2ch [jpn]
 #  #2 audio track 1  aac 2ch [eng]
+
+vshrink probe --json movie.mkv   # same data as JSON, for scripts / jq
+# [
+#   { "index": 0, "type": "video", "codec": "h264", "width": 1920, "height": 1080 },
+#   { "index": 1, "type": "audio", "codec": "aac", "lang": "jpn", "channels": 2 },
+#   ...
+# ]
 ```
+
+| Option | Description |
+| --- | --- |
+| `--json` | Print the stream list as JSON instead of a table |
 
 ## How shrink works
 

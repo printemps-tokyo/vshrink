@@ -31,7 +31,7 @@ Usage:
   vshrink extract-subs -o out.srt <input>  Extract a subtitle track to a file
   vshrink audio [options] <input>          Extract audio (mp3/aac/wav/opus/flac)
   vshrink thumb [options] <input>          Grab a representative frame as an image
-  vshrink probe <input>                    List streams (tracks) in a file
+  vshrink probe [--json] <input>           List streams (tracks) in a file
 
 Run "vshrink <command> --help" for command-specific options.
 
@@ -165,6 +165,19 @@ Options:
   --max-height <n>     Cap output height in pixels
 
 Inputs are re-encoded so files with different codecs/resolutions still join.
+`;
+
+const PROBE_HELP = `vshrink probe - list streams (tracks) in a file
+
+Usage:
+  vshrink probe [options] <input>
+
+Options:
+  --json               Print the stream list as JSON instead of a table
+
+The table shows per-type track numbers to pass to --video-track,
+--audio-track, --burn-track or --track. --json emits the same data as an
+array of { index, type, codec, lang, width, height, channels } objects.
 `;
 
 const COMMANDS = new Set([
@@ -633,13 +646,35 @@ async function runThumb(argv: string[]): Promise<number> {
 }
 
 async function runProbe(argv: string[]): Promise<number> {
-  const input = argv.find((a) => !a.startsWith("-"));
-  if (!input) {
-    process.stderr.write("error: probe needs an input file\n");
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+  if (values.help) {
+    process.stdout.write(PROBE_HELP);
+    return 0;
+  }
+  if (positionals.length === 0) {
+    process.stderr.write("error: probe needs an input file\n\n" + PROBE_HELP);
     return 1;
   }
+  if (positionals.length > 1) {
+    process.stderr.write("error: probe takes a single input\n");
+    return 1;
+  }
+
+  const input = positionals[0] as string;
   try {
     const streams = await listStreams(input);
+    if (values.json) {
+      process.stdout.write(JSON.stringify(streams, null, 2) + "\n");
+      return 0;
+    }
     const byType: Record<string, number> = {};
     process.stdout.write(`${input}\n`);
     for (const s of streams) {
