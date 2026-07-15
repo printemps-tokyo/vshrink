@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultOutput, parsePositive, parseTrack } from "../src/options.js";
+import { defaultOutput, parseNonNegative, parsePositive, parseTrack } from "../src/options.js";
 
 describe("defaultOutput", () => {
   it("replaces the input extension with '<suffix>.mp4'", () => {
@@ -24,7 +24,7 @@ describe("defaultOutput", () => {
 
 describe("parsePositive", () => {
   it("accepts positive integers and decimals", () => {
-    expect(parsePositive("crf", "23")).toBe(23);
+    expect(parsePositive("max-height", "720")).toBe(720);
     expect(parsePositive("duration", "1.5")).toBe(1.5);
   });
 
@@ -36,9 +36,27 @@ describe("parsePositive", () => {
   });
 
   it("rejects zero, negatives and infinities", () => {
-    expect(() => parsePositive("crf", "0")).toThrow(/positive/);
-    expect(() => parsePositive("crf", "-5")).toThrow(/positive/);
-    expect(() => parsePositive("crf", "Infinity")).toThrow(/positive/);
+    expect(() => parsePositive("max-height", "0")).toThrow(/positive/);
+    expect(() => parsePositive("audio", "-5")).toThrow(/positive/);
+    expect(() => parsePositive("audio", "Infinity")).toThrow(/positive/);
+  });
+});
+
+describe("parseNonNegative", () => {
+  it("accepts zero (x264 lossless CRF) and positive numbers", () => {
+    expect(parseNonNegative("crf", "0")).toBe(0);
+    expect(parseNonNegative("crf", "23")).toBe(23);
+    expect(parseNonNegative("crf", "17.5")).toBe(17.5);
+  });
+
+  it("rejects negatives, infinities and non-numeric input", () => {
+    expect(() => parseNonNegative("crf", "-1")).toThrow(
+      '--crf must be a non-negative number (got "-1")',
+    );
+    expect(() => parseNonNegative("crf", "Infinity")).toThrow(/non-negative/);
+    expect(() => parseNonNegative("crf", "abc")).toThrow(/non-negative/);
+    expect(() => parseNonNegative("crf", "")).toThrow(/non-negative/);
+    expect(() => parseNonNegative("crf", " ")).toThrow(/non-negative/);
   });
 });
 

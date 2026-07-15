@@ -24,6 +24,19 @@ export function parsePositive(name: string, value: string): number {
   return n;
 }
 
+/**
+ * Parse a CLI value that must be a non-negative number, or throw a clear
+ * error. Unlike parsePositive this allows 0, which is a valid x264 CRF
+ * (lossless).
+ */
+export function parseNonNegative(name: string, value: string): number {
+  const n = value.trim() === "" ? NaN : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`--${name} must be a non-negative number (got "${value}")`);
+  }
+  return n;
+}
+
 /** Parse a CLI value that must be a non-negative integer (e.g. a track index). */
 export function parseTrack(name: string, value: string): number {
   const n = Number(value);

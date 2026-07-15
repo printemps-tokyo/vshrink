@@ -67,7 +67,7 @@ vshrink *.mov                    # batch
 | `-o, --output <path>` | Output path (single input only) |
 | `--max-height <n>` | Cap output height in pixels |
 | `--audio <kbps>` | Audio bitrate in kbit/s |
-| `--crf <n>` | Quality for size-less presets (lower = better, default 23) |
+| `--crf <n>` | Quality for size-less presets (lower = better, 0 = lossless, default 23) |
 | `--start <ts>` | Trim: start at this timestamp (`00:00:05` or `5`) |
 | `--duration <sec>` | Trim: keep this many seconds |
 | `--dry-run` | Print the plan without encoding |
@@ -105,7 +105,7 @@ vshrink convert --timecode --tc-position br movie.mp4   # burn a running timecod
 | --- | --- |
 | `--video-track <n>` | Video track index (default 0) |
 | `--audio-track <n>` | Audio track index (default 0) |
-| `--crf <n>` | Quality (lower = better, default 23) |
+| `--crf <n>` | Quality (lower = better, 0 = lossless, default 23) |
 | `--audio <kbps>` | Audio bitrate in kbit/s (default 192) |
 | `--max-height <n>` | Cap output height in pixels |
 | `--burn-subs <file>` | Burn an external subtitle file (.srt/.ass) into the video |
@@ -133,7 +133,7 @@ vshrink concat -o full.mp4 part1.mkv part2.mkv part3.mkv
 | Option | Description |
 | --- | --- |
 | `-o, --output <path>` | Output path (required) |
-| `--crf <n>` | Quality (lower = better, default 23) |
+| `--crf <n>` | Quality (lower = better, 0 = lossless, default 23) |
 | `--audio <kbps>` | Audio bitrate in kbit/s (default 192) |
 | `--max-height <n>` | Cap output height in pixels |
 

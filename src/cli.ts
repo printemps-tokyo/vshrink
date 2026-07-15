@@ -19,7 +19,7 @@ import {
   PRESETS,
   DEFAULT_PRESET,
 } from "./index.js";
-import { defaultOutput, parsePositive, parseTrack } from "./options.js";
+import { defaultOutput, parseNonNegative, parsePositive, parseTrack } from "./options.js";
 
 const HELP = `vshrink - ffmpeg helpers for shrinking and converting videos
 
@@ -93,7 +93,7 @@ Options:
   -o, --output <path>   Output path (single input only)
       --max-height <n>  Cap output height in pixels
       --audio <kbps>    Audio bitrate in kbit/s
-      --crf <n>         Quality for size-less presets (lower = better, default 23)
+      --crf <n>         Quality for size-less presets (lower = better, 0 = lossless, default 23)
       --start <ts>      Trim: start at this timestamp (00:00:05 or 5)
       --duration <sec>  Trim: keep this many seconds
       --dry-run         Print the plan without encoding
@@ -108,7 +108,7 @@ Usage:
 Options:
   --video-track <n>    Video track index (default 0)
   --audio-track <n>    Audio track index (default 0)
-  --crf <n>            Quality (lower = better, default 23)
+  --crf <n>            Quality (lower = better, 0 = lossless, default 23)
   --audio <kbps>       Audio bitrate in kbit/s (default 192)
   --max-height <n>     Cap output height in pixels
   --burn-subs <file>   Burn an external subtitle file (.srt/.ass) into the video
@@ -160,7 +160,7 @@ Usage:
 
 Options:
   -o, --output <path>  Output path (required)
-  --crf <n>            Quality (lower = better, default 23)
+  --crf <n>            Quality (lower = better, 0 = lossless, default 23)
   --audio <kbps>       Audio bitrate in kbit/s (default 192)
   --max-height <n>     Cap output height in pixels
 
@@ -264,7 +264,7 @@ async function runShrink(argv: string[]): Promise<number> {
     ? parsePositive("max-height", values["max-height"])
     : undefined;
   const audioKbps = values.audio ? parsePositive("audio", values.audio) : undefined;
-  const crf = values.crf ? parsePositive("crf", values.crf) : undefined;
+  const crf = values.crf ? parseNonNegative("crf", values.crf) : undefined;
 
   let failed = 0;
   for (const input of positionals) {
@@ -380,7 +380,7 @@ async function runConvert(argv: string[]): Promise<number> {
         output,
         videoTrack: values["video-track"] ? parseTrack("video-track", values["video-track"]) : undefined,
         audioTrack: values["audio-track"] ? parseTrack("audio-track", values["audio-track"]) : undefined,
-        crf: values.crf ? parsePositive("crf", values.crf) : undefined,
+        crf: values.crf ? parseNonNegative("crf", values.crf) : undefined,
         audioKbps: values.audio ? parsePositive("audio", values.audio) : undefined,
         maxHeight: values["max-height"] ? parsePositive("max-height", values["max-height"]) : undefined,
         burnSubsPath: values["burn-subs"],
@@ -428,7 +428,7 @@ async function runConcat(argv: string[]): Promise<number> {
     await concat({
       inputs: positionals,
       output: values.output,
-      crf: values.crf ? parsePositive("crf", values.crf) : undefined,
+      crf: values.crf ? parseNonNegative("crf", values.crf) : undefined,
       audioKbps: values.audio ? parsePositive("audio", values.audio) : undefined,
       maxHeight: values["max-height"]
         ? parsePositive("max-height", values["max-height"])

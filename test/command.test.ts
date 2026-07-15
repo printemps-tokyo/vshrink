@@ -93,6 +93,11 @@ describe("buildCrfArgs", () => {
     expect(args[args.length - 1]).toBe("out.mp4");
   });
 
+  it("passes crf 0 (lossless) through as -crf 0", () => {
+    const args = buildCrfArgs({ ...base, videoKbps: 0, crf: 0 });
+    expect(args[args.indexOf("-crf") + 1]).toBe("0");
+  });
+
   it("disables per-frame stats (stderr stays bounded)", () => {
     expect(buildCrfArgs({ ...base, videoKbps: 0 })).toContain("-nostats");
   });
