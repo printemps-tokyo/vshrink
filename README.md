@@ -18,7 +18,7 @@ turns each of these into a single command.
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 22
 - `ffmpeg` and `ffprobe` on your `PATH` (macOS: `brew install ffmpeg`)
 
 ## Install
