@@ -21,11 +21,19 @@ export interface CodecSpec {
   preset: string[];
   /** Container hints for the MP4 output. */
   extra: string[];
-  /** Where a two-pass encode keeps its first-pass stats. */
-  stats: (prefix: string) => string[];
+  /**
+   * How a size target is reached:
+   * - "ffmpeg": ffmpeg's own two passes (-pass, -passlogfile).
+   * - "x265": x265's two passes through -x265-params; the stats file
+   *   (x265_2pass.log) goes to the working directory, so vshrink runs
+   *   these in a scratch directory. ffmpeg only wired libx265 to -pass in
+   *   2026, after 8.0, and -x265-params works with every version.
+   * - "correct": one pass at the planned bitrate, encoded again at a
+   *   corrected one while it overshoots: libsvtav1 takes no -pass in ffmpeg
+   *   8.0 and earlier, so a second "pass" there is just a repeat.
+   */
+  sizeMode: "ffmpeg" | "x265" | "correct";
 }
-
-const passLogFile = (prefix: string): string[] => ["-passlogfile", prefix];
 
 export const CODECS: Record<Codec, CodecSpec> = {
   h264: {
@@ -35,7 +43,7 @@ export const CODECS: Record<Codec, CodecSpec> = {
     maxCrf: 51,
     preset: ["-preset", "medium"],
     extra: [],
-    stats: passLogFile,
+    sizeMode: "ffmpeg",
   },
   hevc: {
     encoder: "libx265",
@@ -46,9 +54,7 @@ export const CODECS: Record<Codec, CodecSpec> = {
     preset: ["-preset", "medium"],
     // hvc1 instead of hev1, so QuickTime and Apple devices play the file.
     extra: ["-tag:v", "hvc1"],
-    // libx265 ignores -passlogfile: its stats file is set with -x265-stats
-    // (without it, x265_2pass.log lands in the working directory).
-    stats: (prefix) => ["-x265-stats", `${prefix}.x265.log`],
+    sizeMode: "x265",
   },
   av1: {
     encoder: "libsvtav1",
@@ -60,8 +66,7 @@ export const CODECS: Record<Codec, CodecSpec> = {
     // SVT-AV1's own default preset.
     preset: [],
     extra: [],
-    // libsvtav1 hands its stats to ffmpeg, which writes them to -passlogfile.
-    stats: passLogFile,
+    sizeMode: "correct",
   },
 };
 
@@ -69,14 +74,9 @@ export function isCodec(name: string): name is Codec {
   return Object.prototype.hasOwnProperty.call(CODECS, name);
 }
 
-/** The files a two-pass encode (any codec) may leave behind for `prefix`. */
+/** The files ffmpeg's two-pass encode leaves behind for `prefix`. */
 export function passLogFiles(prefix: string): string[] {
-  return [
-    `${prefix}-0.log`,
-    `${prefix}-0.log.mbtree`,
-    `${prefix}.x265.log`,
-    `${prefix}.x265.log.cutree`,
-  ];
+  return [`${prefix}-0.log`, `${prefix}-0.log.mbtree`];
 }
 
 function scaleFilter(maxHeight?: number): string[] {
@@ -123,13 +123,16 @@ export function nullDevice(platform: NodeJS.Platform = process.platform): string
   return platform === "win32" ? "NUL" : "/dev/null";
 }
 
-/** The two ffmpeg argument vectors (pass 1 then pass 2) for a target-size encode. */
+/**
+ * The ffmpeg argument vectors for a target-size encode: pass 1 and pass 2,
+ * or a single pass for a codec whose size is reached by correction (see
+ * CodecSpec.sizeMode).
+ */
 export function buildTwoPassArgs(
   o: EncodeArgsInput,
   platform: NodeJS.Platform = process.platform,
-): [string[], string[]] {
+): string[][] {
   const spec = CODECS[o.codec ?? "h264"];
-  const prefix = twoPassLogPrefix(o.output);
   // -nostats stops ffmpeg from streaming per-frame progress lines to stderr,
   // which would overflow execFile's buffered stderr on long encodes.
   const common = [
@@ -145,20 +148,24 @@ export function buildTwoPassArgs(
     `${o.videoKbps}k`,
     ...spec.preset,
     ...scaleFilter(o.maxHeight),
-    ...spec.stats(prefix),
   ];
-  const pass1 = [...common, "-pass", "1", "-an", "-f", "null", nullDevice(platform)];
-  const pass2 = [
-    ...common,
-    "-pass",
-    "2",
+  const output = [
     ...audioArgs(o.hasAudio, o.audioKbps),
     ...spec.extra,
     "-movflags",
     "+faststart",
     o.output,
   ];
-  return [pass1, pass2];
+  if (spec.sizeMode === "correct") return [[...common, ...output]];
+  const pass = (n: 1 | 2): string[] =>
+    spec.sizeMode === "x265"
+      ? ["-x265-params", `pass=${n}`]
+      : ["-passlogfile", twoPassLogPrefix(o.output), "-pass", String(n)];
+  const discard = ["-an", "-f", "null", nullDevice(platform)];
+  return [
+    [...common, ...pass(1), ...discard],
+    [...common, ...pass(2), ...output],
+  ];
 }
 
 /** The single ffmpeg argument vector for a quality-based (CRF) encode. */

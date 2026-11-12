@@ -21,6 +21,7 @@ import {
 } from "./index.js";
 import { defaultOutput, parseNonNegative, parsePositive, parseTrack } from "./options.js";
 import { ProgressLine } from "./progress.js";
+import type { ProgressStage } from "./ffmpeg.js";
 import { isParseArgsError, usageError } from "./usage.js";
 
 const HELP = `vshrink - ffmpeg helpers for shrinking and converting videos
@@ -242,6 +243,14 @@ async function main(): Promise<number> {
   }
 }
 
+const STAGE_LABEL: Record<ProgressStage, string> = {
+  1: "pass 1/2",
+  2: "pass 2/2",
+  crf: "encoding",
+  encode: "encoding",
+  fix: "over the target, encoding again",
+};
+
 async function runShrink(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -304,7 +313,7 @@ async function runShrink(argv: string[]): Promise<number> {
         printCmd: values["print-cmd"],
         codec: values.codec,
         onProgress: (pass, fraction) =>
-          progress.update(`  ${label}: ${pass === "crf" ? "encoding" : `pass ${pass}/2`}`, fraction),
+          progress.update(`  ${label}: ${STAGE_LABEL[pass]}`, fraction),
       });
       progress.done();
 

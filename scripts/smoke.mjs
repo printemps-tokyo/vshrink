@@ -1,7 +1,7 @@
 /* global process, console */
 // Real-ffmpeg smoke test of the built CLI: every codec, in target-size and
 // quality modes, on a short generated clip. Checks the output's codec, that
-// a size target is roughly met, and that no pass logs are left behind.
+// a size target is met within 10%, and that no pass logs are left behind.
 // Run after `npm run build`: node scripts/smoke.mjs (needs ffmpeg/ffprobe
 // with libx264, libx265 and libsvtav1).
 import { execFileSync } from "node:child_process";
@@ -17,14 +17,14 @@ const run = (bin, args) => execFileSync(bin, args, { cwd: dir, encoding: "utf8",
 let failed = 0;
 try {
   run("ffmpeg", [
-    "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=3",
-    "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+    "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=10",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=10",
     "-c:v", "libx264", "-crf", "10", "-c:a", "aac", "-shortest", src,
   ]);
   for (const codec of ["h264", "hevc", "av1"]) {
     for (const mode of ["target", "crf"]) {
       const out = join(dir, `${codec}-${mode}.mp4`);
-      const args = [cli, "-c", codec, "-o", out, ...(mode === "target" ? ["-t", "300k"] : []), src];
+      const args = [cli, "-c", codec, "-o", out, ...(mode === "target" ? ["-t", "600k"] : []), src];
       const name = `${codec} ${mode}`;
       try {
         run(process.execPath, args);
@@ -39,8 +39,8 @@ try {
         }
         if (!probed.some((s) => s.codec_type === "audio")) throw new Error("no audio");
         const bytes = statSync(out).size;
-        // A 3 s clip cannot land exactly; 300 kB with a generous margin.
-        if (mode === "target" && bytes > 300_000 * 1.35) throw new Error(`${bytes} bytes for a 300k target`);
+        // Within 10% of a 600 kB target.
+        if (mode === "target" && bytes > 600_000 * 1.1) throw new Error(`${bytes} bytes for a 600k target`);
         console.log(`ok   ${name}: ${bytes} bytes`);
       } catch (err) {
         failed++;

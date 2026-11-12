@@ -9,6 +9,7 @@ import {
   assertFfmpeg,
   probe,
   encodeTwoPass,
+  type ProgressStage,
   encodeCrf,
   type ProbeResult,
 } from "./ffmpeg.js";
@@ -44,6 +45,9 @@ export {
   type AudioOptions,
   type ThumbOptions,
   progressSeconds,
+  correctedKbps,
+  MAX_CORRECTIONS,
+  type ProgressStage,
 } from "./ffmpeg.js";
 export { resolveThumbTime } from "./thumb.js";
 export { parseTimestampSec } from "./timestamp.js";
@@ -110,7 +114,7 @@ export interface ShrinkOptions {
    * Called when a pass starts (fraction undefined), then as it advances
    * with the fraction of the output done (0..1).
    */
-  onProgress?: (pass: 1 | 2 | "crf", fraction?: number) => void;
+  onProgress?: (pass: ProgressStage, fraction?: number) => void;
 }
 
 export interface ShrinkResult {
@@ -123,6 +127,11 @@ export interface ShrinkResult {
   plan?: BitratePlan;
   mode: "two-pass" | "crf";
   codec: Codec;
+  /**
+   * How many encodes a target-size run made: 2 for two passes, or 1 and up
+   * for a codec whose size is corrected by encoding again (av1).
+   */
+  encodes?: number;
   /** The CRF used, in quality-based mode. */
   crf?: number;
   dryRun: boolean;
@@ -193,12 +202,16 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
       codec,
     };
 
+    let encodes: number | undefined;
     if (!noRun) {
-      await encodeTwoPass({
+      const done = await encodeTwoPass({
         ...encodeArgs,
         onProgress: opts.onProgress,
         totalSec: effectiveDurationSec,
+        targetBytes,
       });
+      encodes = done.encodes;
+      plan.videoKbps = done.videoKbps;
     }
 
     return {
@@ -210,6 +223,7 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
       plan,
       mode: "two-pass",
       codec,
+      encodes,
       dryRun: Boolean(opts.dryRun),
       commands: opts.printCmd
         ? buildTwoPassArgs(encodeArgs).map((args) => formatCommand("ffmpeg", args))

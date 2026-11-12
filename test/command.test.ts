@@ -41,6 +41,10 @@ describe("nullDevice", () => {
   });
 });
 
+/** Both passes of a two-pass codec. */
+const two = (o: Parameters<typeof buildTwoPassArgs>[0]): [string[], string[]] =>
+  buildTwoPassArgs(o, "linux") as [string[], string[]];
+
 const base = {
   input: "in.mov",
   output: "out.mp4",
@@ -51,7 +55,7 @@ const base = {
 
 describe("buildTwoPassArgs", () => {
   it("builds two passes that share the common args and target the bitrate", () => {
-    const [pass1, pass2] = buildTwoPassArgs(base, "linux");
+    const [pass1, pass2] = two(base);
     expect(pass1).toContain("-b:v");
     expect(pass1[pass1.indexOf("-b:v") + 1]).toBe("1200k");
     // Pass 1 discards video to the null sink with no audio.
@@ -64,16 +68,13 @@ describe("buildTwoPassArgs", () => {
   });
 
   it("drops audio in pass 2 when the source has none", () => {
-    const [, pass2] = buildTwoPassArgs({ ...base, hasAudio: false }, "linux");
+    const [, pass2] = two({ ...base, hasAudio: false });
     expect(pass2).toContain("-an");
     expect(pass2).not.toContain("aac");
   });
 
   it("includes scale and trim args when requested", () => {
-    const [, pass2] = buildTwoPassArgs(
-      { ...base, maxHeight: 720, start: "5", durationSec: 10 },
-      "linux",
-    );
+    const [, pass2] = two({ ...base, maxHeight: 720, start: "5", durationSec: 10 });
     expect(pass2).toContain("-vf");
     expect(pass2).toContain("scale=-2:'min(720,ih)'");
     expect(pass2.slice(0, 4)).toEqual(["-y", "-nostats", "-ss", "5"]);
@@ -81,7 +82,7 @@ describe("buildTwoPassArgs", () => {
   });
 
   it("disables per-frame stats in both passes (stderr stays bounded)", () => {
-    const [pass1, pass2] = buildTwoPassArgs(base, "linux");
+    const [pass1, pass2] = two(base);
     expect(pass1).toContain("-nostats");
     expect(pass2).toContain("-nostats");
   });
@@ -107,37 +108,42 @@ describe("buildCrfArgs", () => {
 });
 
 describe("codecs", () => {
-  it("keeps h264 the default, with libx264 and its passlogfile", () => {
-    const [pass1] = buildTwoPassArgs(base, "linux");
+  it("keeps h264 the default, with libx264 and ffmpeg's two passes", () => {
+    const [pass1] = two(base);
     expect(pass1[pass1.indexOf("-c:v") + 1]).toBe("libx264");
     expect(pass1[pass1.indexOf("-passlogfile") + 1]).toBe("out.mp4.vshrink-pass");
-    expect(buildTwoPassArgs({ ...base, codec: "h264" }, "linux")).toEqual(buildTwoPassArgs(base, "linux"));
+    expect(two({ ...base, codec: "h264" })).toEqual(two(base));
   });
 
-  it("hevc uses libx265, its own stats file and the hvc1 tag", () => {
-    const [pass1, pass2] = buildTwoPassArgs({ ...base, codec: "hevc" }, "linux");
+  it("hevc runs x265's own two passes and tags the output hvc1", () => {
+    const [pass1, pass2] = two({ ...base, codec: "hevc" });
     expect(pass1[pass1.indexOf("-c:v") + 1]).toBe("libx265");
     expect(pass1).not.toContain("-passlogfile");
-    expect(pass1[pass1.indexOf("-x265-stats") + 1]).toBe("out.mp4.vshrink-pass.x265.log");
-    expect(pass2[pass2.indexOf("-x265-stats") + 1]).toBe("out.mp4.vshrink-pass.x265.log");
+    expect(pass1).not.toContain("-pass");
+    expect(pass1[pass1.indexOf("-x265-params") + 1]).toBe("pass=1");
+    expect(pass2[pass2.indexOf("-x265-params") + 1]).toBe("pass=2");
+    expect(pass1.slice(-4)).toEqual(["-an", "-f", "null", "/dev/null"]);
     expect(pass2[pass2.indexOf("-tag:v") + 1]).toBe("hvc1");
     expect(pass1).not.toContain("-tag:v");
     const crf = buildCrfArgs({ ...base, videoKbps: 0, codec: "hevc" });
     expect(crf[crf.indexOf("-crf") + 1]).toBe("28");
   });
 
-  it("av1 uses libsvtav1 with its own preset and CRF defaults", () => {
-    const [pass1, pass2] = buildTwoPassArgs({ ...base, codec: "av1" }, "linux");
-    expect(pass1[pass1.indexOf("-c:v") + 1]).toBe("libsvtav1");
-    expect(pass1).not.toContain("-preset");
-    expect(pass1).toContain("-passlogfile");
-    expect(pass2[pass2.indexOf("-pass") + 1]).toBe("2");
+  it("av1 is one libsvtav1 pass at the bitrate, with its own CRF default", () => {
+    const passes = buildTwoPassArgs({ ...base, codec: "av1" }, "linux");
+    expect(passes).toHaveLength(1);
+    const [only] = passes as [string[]];
+    expect(only[only.indexOf("-c:v") + 1]).toBe("libsvtav1");
+    expect(only[only.indexOf("-b:v") + 1]).toBe("1200k");
+    expect(only).not.toContain("-pass");
+    expect(only).not.toContain("-preset");
+    expect(only[only.length - 1]).toBe("out.mp4");
     const crf = buildCrfArgs({ ...base, videoKbps: 0, codec: "av1" });
     expect(crf[crf.indexOf("-crf") + 1]).toBe("35");
   });
 
-  it("lists every pass log a codec may leave", () => {
-    expect(passLogFiles("p")).toEqual(["p-0.log", "p-0.log.mbtree", "p.x265.log", "p.x265.log.cutree"]);
+  it("lists the pass logs ffmpeg's two passes leave", () => {
+    expect(passLogFiles("p")).toEqual(["p-0.log", "p-0.log.mbtree"]);
   });
 
   it("knows its codecs", () => {

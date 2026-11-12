@@ -4,6 +4,7 @@ import { audioFormatSpec, type AudioFormat } from "./audio.js";
 import {
   buildTwoPassArgs,
   buildCrfArgs,
+  CODECS,
   passLogFiles,
   twoPassLogPrefix,
   type Codec,
@@ -116,9 +117,37 @@ export interface EncodeOptions {
    * Called when a pass starts (fraction undefined), then as it advances
    * with the fraction done (0..1) when `totalSec` is known.
    */
-  onProgress?: (pass: 1 | 2 | "crf", fraction?: number) => void;
+  onProgress?: (pass: ProgressStage, fraction?: number) => void;
   /** Length of the output in seconds, for the fraction done. */
   totalSec?: number;
+  /** The size aimed at, for codecs that reach it by correction. */
+  targetBytes?: number;
+}
+
+/**
+ * What an encode is doing: pass 1 or 2 of two, a single quality-based pass,
+ * a single pass at a bitrate ("encode"), or encoding again at a corrected
+ * bitrate after overshooting ("fix").
+ */
+export type ProgressStage = 1 | 2 | "crf" | "encode" | "fix";
+
+/** How many times a corrected encode may be repeated after the first. */
+export const MAX_CORRECTIONS = 2;
+
+/**
+ * The video bitrate to try after an encode at `videoKbps` came out at
+ * `outputBytes` against `targetBytes`: scaled by how far the video part
+ * overshot, with the same 3% headroom the first plan keeps.
+ */
+export function correctedKbps(
+  videoKbps: number,
+  outputBytes: number,
+  targetBytes: number,
+  audioBytes: number,
+): number {
+  const budget = targetBytes * 0.97 - audioBytes;
+  const video = Math.max(1, outputBytes - audioBytes);
+  return Math.max(1, Math.floor((videoKbps * budget) / video));
 }
 
 /** The output time (seconds) in one block of ffmpeg's -progress output, if any. */
@@ -135,10 +164,15 @@ const STDERR_KEEP = 64 * 1024;
  * goes. Rejects like execFile does on a non-zero exit, with the tail of
  * stderr on the error (`stderr`) and in its message.
  */
-export function runFfmpeg(args: string[], onTime?: (sec: number) => void): Promise<void> {
+export function runFfmpeg(
+  args: string[],
+  onTime?: (sec: number) => void,
+  cwd?: string,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn("ffmpeg", ["-progress", "pipe:1", ...args], {
       stdio: ["ignore", "pipe", "pipe"],
+      cwd,
     });
     let stderr = "";
     let pending = "";
@@ -170,7 +204,7 @@ export function runFfmpeg(args: string[], onTime?: (sec: number) => void): Promi
   });
 }
 
-function reporter(opts: EncodeOptions, pass: 1 | 2 | "crf"): ((sec: number) => void) | undefined {
+function reporter(opts: EncodeOptions, pass: ProgressStage): ((sec: number) => void) | undefined {
   const total = opts.totalSec;
   if (!opts.onProgress || !total || total <= 0) return undefined;
   return (sec) => opts.onProgress?.(pass, Math.min(1, Math.max(0, sec / total)));
@@ -182,16 +216,64 @@ function scaleFilter(maxHeight?: number): string[] {
   return ["-vf", `scale=-2:'min(${maxHeight},ih)'`];
 }
 
-/** Two-pass encode targeting a specific video bitrate. */
-export async function encodeTwoPass(opts: EncodeOptions): Promise<void> {
-  const [pass1, pass2] = buildTwoPassArgs(opts);
-  try {
-    opts.onProgress?.(1);
-    await runFfmpeg(pass1, reporter(opts, 1));
-    opts.onProgress?.(2);
-    await runFfmpeg(pass2, reporter(opts, 2));
-  } finally {
-    await cleanupPassLogs(twoPassLogPrefix(opts.output));
+/**
+ * Encode toward a size at a planned video bitrate, the way the codec allows
+ * (see CodecSpec.sizeMode). Returns the bitrate of the last encode and how
+ * many encodes ran.
+ */
+export async function encodeTwoPass(
+  opts: EncodeOptions,
+): Promise<{ videoKbps: number; encodes: number }> {
+  const spec = CODECS[opts.codec ?? "h264"];
+  if (spec.sizeMode === "ffmpeg") {
+    const [pass1, pass2] = buildTwoPassArgs(opts) as [string[], string[]];
+    try {
+      opts.onProgress?.(1);
+      await runFfmpeg(pass1, reporter(opts, 1));
+      opts.onProgress?.(2);
+      await runFfmpeg(pass2, reporter(opts, 2));
+    } finally {
+      await cleanupPassLogs(twoPassLogPrefix(opts.output));
+    }
+    return { videoKbps: opts.videoKbps, encodes: 2 };
+  }
+
+  if (spec.sizeMode === "x265") {
+    // x265 writes x265_2pass.log (and .cutree) to the working directory:
+    // run in a scratch one, with the paths made absolute.
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join, resolve } = await import("node:path");
+    const scratch = await mkdtemp(join(tmpdir(), "vshrink-x265-"));
+    const abs = { ...opts, input: resolve(opts.input), output: resolve(opts.output) };
+    const [pass1, pass2] = buildTwoPassArgs(abs) as [string[], string[]];
+    try {
+      opts.onProgress?.(1);
+      await runFfmpeg(pass1, reporter(opts, 1), scratch);
+      opts.onProgress?.(2);
+      await runFfmpeg(pass2, reporter(opts, 2), scratch);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
+    return { videoKbps: opts.videoKbps, encodes: 2 };
+  }
+
+  // One pass, repeated at a corrected bitrate while it overshoots.
+  const { stat } = await import("node:fs/promises");
+  const audioBytes = opts.hasAudio ? (opts.audioKbps * 1000 * (opts.totalSec ?? 0)) / 8 : 0;
+  let videoKbps = opts.videoKbps;
+  for (let n = 0; ; n++) {
+    const stage = n === 0 ? "encode" : "fix";
+    opts.onProgress?.(stage);
+    const [args] = buildTwoPassArgs({ ...opts, videoKbps }) as [string[]];
+    await runFfmpeg(args, reporter(opts, stage));
+    const size = (await stat(opts.output)).size;
+    if (opts.targetBytes === undefined || size <= opts.targetBytes || n === MAX_CORRECTIONS) {
+      return { videoKbps, encodes: n + 1 };
+    }
+    const next = correctedKbps(videoKbps, size, opts.targetBytes, audioBytes);
+    if (next >= videoKbps) return { videoKbps, encodes: n + 1 };
+    videoKbps = next;
   }
 }
 

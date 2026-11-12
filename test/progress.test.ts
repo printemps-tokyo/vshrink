@@ -3,7 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { formatBar, ProgressLine } from "../src/progress.js";
-import { progressSeconds, runFfmpeg } from "../src/ffmpeg.js";
+import { correctedKbps, progressSeconds, runFfmpeg } from "../src/ffmpeg.js";
 
 describe("progressSeconds", () => {
   it("reads out_time_us and out_time_ms (both microseconds)", () => {
@@ -98,5 +98,17 @@ describe.skipIf(process.platform === "win32")("runFfmpeg", () => {
   it("rejects with the end of stderr on failure", async () => {
     await fakeFfmpeg('echo "Unknown encoder libsvtav1" >&2\nexit 1');
     await expect(runFfmpeg(["-i", "x"])).rejects.toThrow(/exit code 1\)\nUnknown encoder libsvtav1/);
+  });
+});
+
+describe("correctedKbps", () => {
+  it("scales the video bitrate by how far the video part overshot", () => {
+    // 1000 kB target, 100 kB of audio, 1500 kB out: video was 1400 kB
+    // against a budget of 870 kB.
+    expect(correctedKbps(1000, 1_500_000, 1_000_000, 100_000)).toBe(621);
+  });
+
+  it("never goes below 1 kbit/s", () => {
+    expect(correctedKbps(10, 10_000_000, 1000, 5000)).toBe(1);
   });
 });

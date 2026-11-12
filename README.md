@@ -246,8 +246,21 @@ playback). Without a target, it uses CRF quality-based encoding instead.
 | Codec | Encoder | Default CRF | Notes |
 | --- | --- | --- | --- |
 | `h264` | `libx264` (`-preset medium`) | 23 | Plays everywhere |
-| `hevc` | `libx265` (`-preset medium`) | 28 | Tagged `hvc1` so QuickTime and Apple devices play it; two-pass stats go to `-x265-stats` |
+| `hevc` | `libx265` (`-preset medium`) | 28 | Tagged `hvc1` so QuickTime and Apple devices play it |
 | `av1` | `libsvtav1` (its default preset) | 35 | Smallest at the same quality, slowest to encode; CRF 1-63 |
+
+How a size target is reached differs by codec, so that it works with the
+ffmpeg most systems ship (8.0 and earlier do not pass `-pass` on to libx265 or
+libsvtav1):
+
+- `h264`: ffmpeg's two passes (`-pass`, `-passlogfile`).
+- `hevc`: x265's own two passes (`-x265-params pass=1`, then `pass=2`). x265
+  keeps its stats in the working directory, so vshrink runs the passes in a
+  scratch directory; a command from `--print-cmd` leaves `x265_2pass.log`
+  where you run it.
+- `av1`: one pass at the planned bitrate. SVT-AV1 can overshoot, so when the
+  result is over the target it is encoded again at a corrected bitrate, at
+  most twice more.
 
 The default CRFs are each encoder's own default. HEVC and AV1 need an ffmpeg
 built with libx265 and libsvtav1 (`ffmpeg -encoders` lists them). With
