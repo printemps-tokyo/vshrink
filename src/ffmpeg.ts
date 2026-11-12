@@ -283,6 +283,7 @@ export async function convert(opts: ConvertOptions): Promise<void> {
         "subtitle burn-in failed: this ffmpeg build lacks the 'subtitles' filter " +
           "(libass). Install an ffmpeg built with --enable-libass.\n" +
           message,
+        { cause: err },
       );
     }
     if (timecode && /(No such filter|Unknown filter):?\s*'?drawtext/i.test(message)) {
@@ -290,6 +291,7 @@ export async function convert(opts: ConvertOptions): Promise<void> {
         "timecode burn-in failed: this ffmpeg build lacks the 'drawtext' filter " +
           "(libfreetype). Install an ffmpeg built with --enable-libfreetype.\n" +
           message,
+        { cause: err },
       );
     }
     throw err;
