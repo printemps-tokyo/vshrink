@@ -1,7 +1,13 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { audioFormatSpec, type AudioFormat } from "./audio.js";
-import { buildTwoPassArgs, buildCrfArgs, twoPassLogPrefix } from "./command.js";
+import {
+  buildTwoPassArgs,
+  buildCrfArgs,
+  passLogFiles,
+  twoPassLogPrefix,
+  type Codec,
+} from "./command.js";
 import { buildConcatList } from "./concat.js";
 import { buildPaletteGenFilter, buildPaletteUseFilter } from "./gif.js";
 import { escapeSubtitlesPath } from "./subtitles.js";
@@ -104,7 +110,70 @@ export interface EncodeOptions {
   start?: string;
   /** Trim: output duration in seconds (ffmpeg -t). */
   durationSec?: number;
-  onProgress?: (pass: 1 | 2 | "crf") => void;
+  /** Video codec (default h264). */
+  codec?: Codec;
+  /**
+   * Called when a pass starts (fraction undefined), then as it advances
+   * with the fraction done (0..1) when `totalSec` is known.
+   */
+  onProgress?: (pass: 1 | 2 | "crf", fraction?: number) => void;
+  /** Length of the output in seconds, for the fraction done. */
+  totalSec?: number;
+}
+
+/** The output time (seconds) in one block of ffmpeg's -progress output, if any. */
+export function progressSeconds(line: string): number | undefined {
+  // out_time_us is microseconds; out_time_ms, despite its name, is too.
+  const m = /^out_time_(?:us|ms)=(\d+)$/.exec(line.trim());
+  return m ? Number(m[1]) / 1_000_000 : undefined;
+}
+
+const STDERR_KEEP = 64 * 1024;
+
+/**
+ * Run ffmpeg with -progress on stdout, reporting the output time as it
+ * goes. Rejects like execFile does on a non-zero exit, with the tail of
+ * stderr on the error (`stderr`) and in its message.
+ */
+export function runFfmpeg(args: string[], onTime?: (sec: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", ["-progress", "pipe:1", ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    let pending = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr = (stderr + chunk).slice(-STDERR_KEEP);
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      pending += chunk;
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        const sec = progressSeconds(line);
+        if (sec !== undefined) onTime?.(sec);
+      }
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const why = signal ? `killed by ${signal}` : `exit code ${code}`;
+      const err = new Error(`ffmpeg failed (${why})\n${stderr.trim()}`) as Error & { stderr: string };
+      err.stderr = stderr;
+      reject(err);
+    });
+  });
+}
+
+function reporter(opts: EncodeOptions, pass: 1 | 2 | "crf"): ((sec: number) => void) | undefined {
+  const total = opts.totalSec;
+  if (!opts.onProgress || !total || total <= 0) return undefined;
+  return (sec) => opts.onProgress?.(pass, Math.min(1, Math.max(0, sec / total)));
 }
 
 function scaleFilter(maxHeight?: number): string[] {
@@ -113,20 +182,23 @@ function scaleFilter(maxHeight?: number): string[] {
   return ["-vf", `scale=-2:'min(${maxHeight},ih)'`];
 }
 
-/** Two-pass H.264 encode targeting a specific video bitrate. */
+/** Two-pass encode targeting a specific video bitrate. */
 export async function encodeTwoPass(opts: EncodeOptions): Promise<void> {
   const [pass1, pass2] = buildTwoPassArgs(opts);
-  opts.onProgress?.(1);
-  await pexecFile("ffmpeg", pass1);
-  opts.onProgress?.(2);
-  await pexecFile("ffmpeg", pass2);
-  await cleanupPassLogs(twoPassLogPrefix(opts.output));
+  try {
+    opts.onProgress?.(1);
+    await runFfmpeg(pass1, reporter(opts, 1));
+    opts.onProgress?.(2);
+    await runFfmpeg(pass2, reporter(opts, 2));
+  } finally {
+    await cleanupPassLogs(twoPassLogPrefix(opts.output));
+  }
 }
 
 /** Quality-based (CRF) encode when no target size is given. */
 export async function encodeCrf(opts: EncodeOptions): Promise<void> {
   opts.onProgress?.("crf");
-  await pexecFile("ffmpeg", buildCrfArgs(opts));
+  await runFfmpeg(buildCrfArgs(opts), reporter(opts, "crf"));
 }
 
 export interface StreamInfo {
@@ -500,8 +572,5 @@ export async function extractThumbnail(opts: ThumbOptions): Promise<void> {
 
 async function cleanupPassLogs(prefix: string): Promise<void> {
   const { rm } = await import("node:fs/promises");
-  await Promise.allSettled([
-    rm(`${prefix}-0.log`, { force: true }),
-    rm(`${prefix}-0.log.mbtree`, { force: true }),
-  ]);
+  await Promise.allSettled(passLogFiles(prefix).map((f) => rm(f, { force: true })));
 }

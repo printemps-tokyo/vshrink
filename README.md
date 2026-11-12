@@ -58,6 +58,7 @@ vshrink -t 6MB -o out.mp4 clip.mov
 vshrink --dry-run -t 6MB clip.mov  # show the plan, no encoding
 vshrink --print-cmd -t 6MB clip.mov  # print the exact ffmpeg command(s)
 vshrink *.mov                    # batch
+vshrink -c av1 -p discord clip.mov  # AV1 (or hevc) instead of H.264
 ```
 
 | Option | Description |
@@ -67,11 +68,13 @@ vshrink *.mov                    # batch
 | `-o, --output <path>` | Output path (single input only) |
 | `--max-height <n>` | Cap output height in pixels |
 | `--audio <kbps>` | Audio bitrate in kbit/s |
-| `--crf <n>` | Quality for size-less presets (lower = better, 0 = lossless, default 23) |
+| `-c, --codec <name>` | Video codec: `h264` (default), `hevc`, `av1` |
+| `--crf <n>` | Quality for size-less presets (lower = better; default 23 for h264, 28 for hevc, 35 for av1; 0 = lossless with h264) |
 | `--start <ts>` | Trim: start at this timestamp (`00:00:05` or `5`) |
 | `--duration <sec>` | Trim: keep this many seconds |
 | `--dry-run` | Print the plan without encoding |
 | `--print-cmd` | Print the exact ffmpeg command(s) without encoding |
+| `--no-progress` | No live progress bar on a terminal |
 
 `--print-cmd` writes the shell-quoted ffmpeg command line(s) it would run (two
 lines for a two-pass target-size encode) and exits without touching any file, so
@@ -237,8 +240,20 @@ total_kbps = target_bytes * 8 / 1000 / duration_seconds
 video_kbps = total_kbps * 0.97 - audio_kbps
 ```
 
-It then runs a two-pass `libx264` encode at that bitrate (`+faststart` for web
+It then runs a two-pass encode at that bitrate (`+faststart` for web
 playback). Without a target, it uses CRF quality-based encoding instead.
+
+| Codec | Encoder | Default CRF | Notes |
+| --- | --- | --- | --- |
+| `h264` | `libx264` (`-preset medium`) | 23 | Plays everywhere |
+| `hevc` | `libx265` (`-preset medium`) | 28 | Tagged `hvc1` so QuickTime and Apple devices play it; two-pass stats go to `-x265-stats` |
+| `av1` | `libsvtav1` (its default preset) | 35 | Smallest at the same quality, slowest to encode; CRF 1-63 |
+
+The default CRFs are each encoder's own default. HEVC and AV1 need an ffmpeg
+built with libx265 and libsvtav1 (`ffmpeg -encoders` lists them). With
+several inputs, each one is encoded in turn and a failure does not stop the
+rest. On a terminal, a progress bar shows how far each pass has got (from
+ffmpeg's `-progress` output); elsewhere, one line per pass is printed.
 
 ## Programmatic API
 

@@ -14,7 +14,15 @@ import {
 } from "./ffmpeg.js";
 import { PRESETS, DEFAULT_PRESET, isPreset } from "./presets.js";
 import { parseTimestampSec } from "./timestamp.js";
-import { buildTwoPassArgs, buildCrfArgs, formatCommand, type EncodeArgsInput } from "./command.js";
+import {
+  buildTwoPassArgs,
+  buildCrfArgs,
+  CODECS,
+  formatCommand,
+  isCodec,
+  type Codec,
+  type EncodeArgsInput,
+} from "./command.js";
 
 export { planBitrate, parseSize, formatSize } from "./bitrate.js";
 export { PRESETS, DEFAULT_PRESET, isPreset, type Preset } from "./presets.js";
@@ -35,6 +43,7 @@ export {
   type ExtractSubsOptions,
   type AudioOptions,
   type ThumbOptions,
+  progressSeconds,
 } from "./ffmpeg.js";
 export { resolveThumbTime } from "./thumb.js";
 export { parseTimestampSec } from "./timestamp.js";
@@ -49,6 +58,10 @@ export { buildConcatList, escapeConcatPath } from "./concat.js";
 export {
   buildTwoPassArgs,
   buildCrfArgs,
+  CODECS,
+  isCodec,
+  type Codec,
+  type CodecSpec,
   formatCommand,
   quoteArg,
   twoPassLogPrefix,
@@ -91,7 +104,13 @@ export interface ShrinkOptions {
   dryRun?: boolean;
   /** Print the exact ffmpeg command(s) without encoding. */
   printCmd?: boolean;
-  onProgress?: (pass: 1 | 2 | "crf") => void;
+  /** Video codec: h264 (default), hevc or av1. */
+  codec?: string;
+  /**
+   * Called when a pass starts (fraction undefined), then as it advances
+   * with the fraction of the output done (0..1).
+   */
+  onProgress?: (pass: 1 | 2 | "crf", fraction?: number) => void;
 }
 
 export interface ShrinkResult {
@@ -103,6 +122,9 @@ export interface ShrinkResult {
   /** Present only when a target-size (two-pass) encode was planned. */
   plan?: BitratePlan;
   mode: "two-pass" | "crf";
+  codec: Codec;
+  /** The CRF used, in quality-based mode. */
+  crf?: number;
   dryRun: boolean;
   /** The ffmpeg command line(s), present only when printCmd was requested. */
   commands?: string[];
@@ -122,6 +144,14 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
     );
   }
   const preset = PRESETS[presetName];
+  const codec = opts.codec ?? "h264";
+  if (!isCodec(codec)) {
+    throw new Error(`unknown codec "${codec}" (expected: ${Object.keys(CODECS).join(", ")})`);
+  }
+  const spec = CODECS[codec];
+  if (opts.crf !== undefined && (opts.crf < spec.minCrf || opts.crf > spec.maxCrf)) {
+    throw new Error(`--crf for ${codec} is ${spec.minCrf}-${spec.maxCrf} (got ${opts.crf})`);
+  }
 
   const inputBytes = (await stat(opts.input)).size;
   const info = await probe(opts.input);
@@ -160,10 +190,15 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
       maxHeight,
       start: opts.start,
       durationSec: opts.durationSec,
+      codec,
     };
 
     if (!noRun) {
-      await encodeTwoPass({ ...encodeArgs, onProgress: opts.onProgress });
+      await encodeTwoPass({
+        ...encodeArgs,
+        onProgress: opts.onProgress,
+        totalSec: effectiveDurationSec,
+      });
     }
 
     return {
@@ -174,6 +209,7 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
       probe: info,
       plan,
       mode: "two-pass",
+      codec,
       dryRun: Boolean(opts.dryRun),
       commands: opts.printCmd
         ? buildTwoPassArgs(encodeArgs).map((args) => formatCommand("ffmpeg", args))
@@ -189,13 +225,14 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
     audioKbps,
     hasAudio: info.hasAudio,
     maxHeight,
-    crf: opts.crf,
+    crf: opts.crf ?? spec.defaultCrf,
     start: opts.start,
     durationSec: opts.durationSec,
+    codec,
   };
 
   if (!noRun) {
-    await encodeCrf({ ...crfArgs, onProgress: opts.onProgress });
+    await encodeCrf({ ...crfArgs, onProgress: opts.onProgress, totalSec: effectiveDurationSec });
   }
 
   return {
@@ -205,6 +242,8 @@ export async function shrink(opts: ShrinkOptions): Promise<ShrinkResult> {
     outputBytes: noRun ? undefined : (await stat(output)).size,
     probe: info,
     mode: "crf",
+    codec,
+    crf: crfArgs.crf,
     dryRun: Boolean(opts.dryRun),
     commands: opts.printCmd ? [formatCommand("ffmpeg", buildCrfArgs(crfArgs))] : undefined,
   };

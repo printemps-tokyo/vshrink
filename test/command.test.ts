@@ -5,6 +5,9 @@ import {
   buildTwoPassArgs,
   buildCrfArgs,
   nullDevice,
+  passLogFiles,
+  isCodec,
+  CODECS,
 } from "../src/command.js";
 
 describe("quoteArg", () => {
@@ -100,5 +103,46 @@ describe("buildCrfArgs", () => {
 
   it("disables per-frame stats (stderr stays bounded)", () => {
     expect(buildCrfArgs({ ...base, videoKbps: 0 })).toContain("-nostats");
+  });
+});
+
+describe("codecs", () => {
+  it("keeps h264 the default, with libx264 and its passlogfile", () => {
+    const [pass1] = buildTwoPassArgs(base, "linux");
+    expect(pass1[pass1.indexOf("-c:v") + 1]).toBe("libx264");
+    expect(pass1[pass1.indexOf("-passlogfile") + 1]).toBe("out.mp4.vshrink-pass");
+    expect(buildTwoPassArgs({ ...base, codec: "h264" }, "linux")).toEqual(buildTwoPassArgs(base, "linux"));
+  });
+
+  it("hevc uses libx265, its own stats file and the hvc1 tag", () => {
+    const [pass1, pass2] = buildTwoPassArgs({ ...base, codec: "hevc" }, "linux");
+    expect(pass1[pass1.indexOf("-c:v") + 1]).toBe("libx265");
+    expect(pass1).not.toContain("-passlogfile");
+    expect(pass1[pass1.indexOf("-x265-stats") + 1]).toBe("out.mp4.vshrink-pass.x265.log");
+    expect(pass2[pass2.indexOf("-x265-stats") + 1]).toBe("out.mp4.vshrink-pass.x265.log");
+    expect(pass2[pass2.indexOf("-tag:v") + 1]).toBe("hvc1");
+    expect(pass1).not.toContain("-tag:v");
+    const crf = buildCrfArgs({ ...base, videoKbps: 0, codec: "hevc" });
+    expect(crf[crf.indexOf("-crf") + 1]).toBe("28");
+  });
+
+  it("av1 uses libsvtav1 with its own preset and CRF defaults", () => {
+    const [pass1, pass2] = buildTwoPassArgs({ ...base, codec: "av1" }, "linux");
+    expect(pass1[pass1.indexOf("-c:v") + 1]).toBe("libsvtav1");
+    expect(pass1).not.toContain("-preset");
+    expect(pass1).toContain("-passlogfile");
+    expect(pass2[pass2.indexOf("-pass") + 1]).toBe("2");
+    const crf = buildCrfArgs({ ...base, videoKbps: 0, codec: "av1" });
+    expect(crf[crf.indexOf("-crf") + 1]).toBe("35");
+  });
+
+  it("lists every pass log a codec may leave", () => {
+    expect(passLogFiles("p")).toEqual(["p-0.log", "p-0.log.mbtree", "p.x265.log", "p.x265.log.cutree"]);
+  });
+
+  it("knows its codecs", () => {
+    expect(isCodec("av1")).toBe(true);
+    expect(isCodec("vp9")).toBe(false);
+    expect(Object.keys(CODECS)).toEqual(["h264", "hevc", "av1"]);
   });
 });

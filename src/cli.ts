@@ -20,6 +20,7 @@ import {
   DEFAULT_PRESET,
 } from "./index.js";
 import { defaultOutput, parseNonNegative, parsePositive, parseTrack } from "./options.js";
+import { ProgressLine } from "./progress.js";
 import { isParseArgsError, usageError } from "./usage.js";
 
 const HELP = `vshrink - ffmpeg helpers for shrinking and converting videos
@@ -37,7 +38,7 @@ Usage:
 Run "vshrink <command> --help" for command-specific options.
 
 Commands:
-  shrink        (default) two-pass H.264 to hit a target size, CRF fallback
+  shrink        (default) two-pass H.264, HEVC or AV1 to hit a target size, CRF fallback
   convert       mkv/mov -> mp4 with --video-track / --audio-track selection
   concat        concatenate multiple inputs (re-encode) into one mp4
   gif           render a high-quality GIF via the two-pass palette method
@@ -94,11 +95,14 @@ Options:
   -o, --output <path>   Output path (single input only)
       --max-height <n>  Cap output height in pixels
       --audio <kbps>    Audio bitrate in kbit/s
-      --crf <n>         Quality for size-less presets (lower = better, 0 = lossless, default 23)
+  -c, --codec <name>    Video codec: h264 (default), hevc, av1
+      --crf <n>         Quality for size-less presets (lower = better; default
+                        23 for h264, 28 for hevc, 35 for av1; 0 = lossless with h264)
       --start <ts>      Trim: start at this timestamp (00:00:05 or 5)
       --duration <sec>  Trim: keep this many seconds
       --dry-run         Print the plan without encoding
       --print-cmd       Print the exact ffmpeg command(s) without encoding
+      --no-progress     No live progress bar on a terminal
 `;
 
 const CONVERT_HELP = `vshrink convert - transcode to H.264/AAC mp4 with track selection
@@ -253,6 +257,8 @@ async function runShrink(argv: string[]): Promise<number> {
       duration: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       "print-cmd": { type: "boolean", default: false },
+      codec: { type: "string", short: "c" },
+      "no-progress": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -277,8 +283,12 @@ async function runShrink(argv: string[]): Promise<number> {
   const audioKbps = values.audio ? parsePositive("audio", values.audio) : undefined;
   const crf = values.crf ? parseNonNegative("crf", values.crf) : undefined;
 
+  // A live line on a terminal; elsewhere (logs, CI) one line per pass.
+  const live = Boolean(process.stderr.isTTY) && !values["no-progress"];
   let failed = 0;
-  for (const input of positionals) {
+  for (const [i, input] of positionals.entries()) {
+    const label = positionals.length > 1 ? `[${i + 1}/${positionals.length}] ${input}` : input;
+    const progress = new ProgressLine(live);
     try {
       const res = await shrink({
         input,
@@ -292,22 +302,22 @@ async function runShrink(argv: string[]): Promise<number> {
         durationSec: values.duration ? parsePositive("duration", values.duration) : undefined,
         dryRun: values["dry-run"],
         printCmd: values["print-cmd"],
-        onProgress: (pass) =>
-          process.stderr.write(
-            `  ${input}: ${pass === "crf" ? "encoding" : `pass ${pass}/2`}...\n`,
-          ),
+        codec: values.codec,
+        onProgress: (pass, fraction) =>
+          progress.update(`  ${label}: ${pass === "crf" ? "encoding" : `pass ${pass}/2`}`, fraction),
       });
+      progress.done();
 
       if (res.commands) {
         process.stdout.write(res.commands.map((c) => `${c}\n`).join(""));
       } else if (res.dryRun) {
         const plan = res.plan
           ? `video ${res.plan.videoKbps}k + audio ${res.plan.audioKbps}k`
-          : `crf ${crf ?? 23}`;
+          : `crf ${res.crf}`;
         process.stdout.write(
           `[dry-run] ${input} (${formatSize(res.inputBytes)}, ` +
             `${res.probe.durationSec.toFixed(1)}s) -> ${res.output}\n` +
-            `          mode=${res.mode} ${plan}` +
+            `          mode=${res.mode} codec=${res.codec} ${plan}` +
             (res.plan?.belowFloor ? " [warning: very low bitrate]" : "") +
             "\n",
         );
@@ -322,6 +332,7 @@ async function runShrink(argv: string[]): Promise<number> {
         );
       }
     } catch (err) {
+      progress.done();
       failed++;
       process.stderr.write(`error: ${input}: ${(err as Error).message}\n`);
     }
